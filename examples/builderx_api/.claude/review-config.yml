@@ -1,0 +1,19 @@
+# builderx_api — Elixir/Phoenix/Citus
+review:
+  ignore_patterns:
+    - "priv/static/*"
+    - "priv/gettext/**"
+    - "assets/node_modules/**"
+    - "assets/vendor/*"
+    - "*.json"
+  include_patterns:
+    - "priv/repo/migrations/*.exs"
+  extra_rules:
+    - "All sharded table queries MUST include site_id in WHERE clause"
+    - "All joins between sharded tables MUST include site_id in ON condition"
+    - "Use BuilderxApi.Citus for tenant data, BuilderxApi.Repo for global, BuilderxApi.CitusCoord for coordinator"
+    - "Context functions for tenant-scoped data MUST take site_id as first argument"
+    - "Controllers must return FallbackController tuples: {:success, :with_data, key, data} etc."
+    - "No Repo calls in controllers — use context modules"
+    - "No String.to_atom/1 on user input"
+    - "RabbitMQ/Kafka consumers must be idempotent"

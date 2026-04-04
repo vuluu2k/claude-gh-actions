@@ -1,40 +1,30 @@
 # Claude GH Actions
 
-Reusable GitHub Actions for automated PR code review using Claude Code. Works with **any tech stack** — project-specific rules are loaded from `CLAUDE.md` at runtime.
+Reusable GitHub Action for automated PR code review using Claude Code. Works with **any tech stack** — project-specific rules are loaded from `CLAUDE.md` at runtime.
 
 ## How it works
 
 ```
-claude-gh-actions (generic)     +     Your repo's CLAUDE.md (specific)
-─────────────────────────────         ──────────────────────────────────
-Review process, severity system       Architecture rules, naming conventions,
-Comment format, submission flow       DB constraints, response formats, etc.
-Deep analysis methodology             Project-specific review criteria
+claude-gh-actions (generic)           Your repo (specific)
+───────────────────────────           ────────────────────
+action.yml    → orchestration         CLAUDE.md           → architecture rules
+prompts/      → review methodology    .claude/review-config.yml → ignore/include patterns
+                                      extra_prompt        → one-off instructions
 ```
 
-The prompt reads your project's `CLAUDE.md` and `.claude/review-config.yml` at review time, so **one action works for all repos** without modification.
+The reviewer reads your project's `CLAUDE.md` and `.claude/review-config.yml` at review time, so **one action works for all repos**.
 
-## Features
+## Quick Start
 
-- **Scope-based review** — adapts focus based on commit types (fix, feat, refactor, etc.)
-- **CLAUDE.md-driven** — enforces your project's specific architecture rules
-- **Inline line-level comments** with severity badges (Major/Minor/Nitpick)
-- **Deep analysis** — traces callers, reads utility implementations, verifies edge cases
-- **Re-review support** — tracks previous comments, handles author rebuttals
-- **Token usage reporting** in GitHub Step Summary
-- **Per-repo config** overrides via `.claude/review-config.yml`
-- **Auto-skip** draft PRs and bot authors
+### 1. Add secret
 
-## Setup
+Go to **Settings > Secrets and variables > Actions** and add:
 
-### 1. Add as git subtree in your repo
+| Secret | How to get |
+|--------|------------|
+| `CLAUDE_CODE_OAUTH_TOKEN` | Run `claude setup-token` locally |
 
-```bash
-git subtree add --prefix=.github/actions/review \
-    git@github.com:pancake-vn/claude-gh-actions.git main --squash
-```
-
-### 2. Create workflow file
+### 2. Create workflow
 
 Create `.github/workflows/code-review.yml`:
 
@@ -72,52 +62,38 @@ jobs:
           fetch-depth: 0
 
       - name: Claude Code Review
-        uses: ./.github/actions/review
+        uses: pancake-vn/claude-gh-actions@v1
         with:
           claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-### 3. Add secrets
+That's it. No subtree, no copy — just reference the action with a version tag.
 
-Go to **Settings > Secrets and variables > Actions** and add:
+## Usage Methods
 
-| Secret | Description |
-|--------|-------------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude OAuth token (run `claude setup-token` locally) |
-
-`GITHUB_TOKEN` is automatically provided by GitHub Actions.
-
-### 4. Add project rules (optional but recommended)
-
-Create a `CLAUDE.md` at your repo root with project-specific rules. The reviewer will read and enforce these automatically. Example:
-
-```markdown
-# My Project Rules
-- All database queries must include `tenant_id` in WHERE clause
-- Controllers must be thin — no business logic
-- Use `Ecto.Multi` for atomic operations
-```
-
-## Configuration
-
-### Per-repo review config (optional)
-
-Create `.claude/review-config.yml` in your repo:
+### Method 1: Direct reference (recommended)
 
 ```yaml
-review:
-  ignore_patterns:
-    - "priv/repo/seeds/*"
-    - "assets/vendor/*"
-    - "*.min.js"
-  include_patterns:
-    - "priv/repo/migrations/*.exs"
-  extra_rules:
-    - "Custom review rule for this project"
+uses: pancake-vn/claude-gh-actions@v1
 ```
 
-### Action inputs
+Version pinned, auto-updates with tag. No files to manage in your repo.
+
+### Method 2: Git subtree (if you need to modify the prompt)
+
+```bash
+git subtree add --prefix=.github/actions/review \
+    git@github.com:pancake-vn/claude-gh-actions.git main --squash
+```
+
+```yaml
+uses: ./.github/actions/review
+```
+
+Update with: `git subtree pull --prefix=.github/actions/review git@github.com:pancake-vn/claude-gh-actions.git main --squash`
+
+## Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
@@ -125,10 +101,11 @@ review:
 | `github_token` | Yes | — | GitHub token for PR operations |
 | `pr_number` | No | auto-detect | PR number (auto-detected from event) |
 | `max_turns` | No | `30` | Maximum agentic turns |
-| `model` | No | `claude-sonnet-4-20250514` | Claude model to use |
-| `extra_prompt` | No | — | Additional review instructions |
+| `model` | No | `claude-sonnet-4-20250514` | Claude model |
+| `review_prompt` | No | built-in | Override default review prompt entirely |
+| `extra_prompt` | No | — | Append additional instructions |
 
-### Action outputs
+## Outputs
 
 | Output | Description |
 |--------|-------------|
@@ -136,59 +113,61 @@ review:
 | `num_turns` | Number of turns used |
 | `session_id` | Claude session ID |
 
-## Updating
+## Per-repo Configuration
 
-Pull latest changes from upstream:
+### CLAUDE.md (project rules)
 
-```bash
-git subtree pull --prefix=.github/actions/review \
-    git@github.com:pancake-vn/claude-gh-actions.git main --squash
+The reviewer reads `CLAUDE.md` at repo root and enforces its rules. This is the main way to customize reviews per project — no action changes needed.
+
+### .claude/review-config.yml (review-specific)
+
+```yaml
+review:
+  ignore_patterns:
+    - "assets/vendor/*"
+    - "*.min.js"
+  include_patterns:
+    - "priv/repo/migrations/*.exs"
+  extra_rules:
+    - "Custom rule specific to code review"
 ```
 
-## Triggering a review
+## Examples
+
+See [`examples/`](./examples/) for ready-to-use configs:
+
+| Project | Stack | What's different |
+|---------|-------|-----------------|
+| [`builderx_api`](./examples/builderx_api/) | Elixir/Phoenix/Citus | review-config with sharding rules, Elixir ignore patterns |
+| [`builderx_spa`](./examples/builderx_spa/) | Vue 3/Vite/Pinia | review-config with Vue rules, frontend ignore patterns |
+
+**The workflow file is identical** — only `.claude/review-config.yml` differs per project.
+
+## Triggering
 
 | Method | How |
 |--------|-----|
-| Auto on PR | Opens or pushes new commits |
+| Auto on PR | Opens, reopens, or pushes new commits |
 | Comment | Type `/review` in PR comment |
-| Manual | Actions tab > Claude Code Review > Run workflow > enter PR number |
+| Manual | Actions tab > Run workflow > enter PR number |
 
-## Severity levels
+## Severity Levels
 
-| Badge | Meaning | Action required |
-|-------|---------|-----------------|
-| ![Major](https://img.shields.io/badge/Major-red?style=flat-square) | Bugs, security, data loss, architecture violations | Must fix before merge |
-| ![Minor](https://img.shields.io/badge/Minor-orange?style=flat-square) | Design issues, error handling, regressions | Should fix or explain |
+| Badge | Meaning | Action |
+|-------|---------|--------|
+| ![Major](https://img.shields.io/badge/Major-red?style=flat-square) | Bugs, security, data loss, architecture violations | Must fix |
+| ![Minor](https://img.shields.io/badge/Minor-orange?style=flat-square) | Design issues, error handling, regressions | Should fix |
 | ![Nitpick](https://img.shields.io/badge/Nitpick-cyan?style=flat-square) | Style, naming, optional improvements | Optional |
 
-## Example: using with different projects
+## Releasing a new version
 
-**Elixir/Phoenix project** — just add a `CLAUDE.md` with Elixir rules:
-```yaml
-# No changes to the action needed — CLAUDE.md drives the rules
-- name: Claude Code Review
-  uses: ./.github/actions/review
-  with:
-    claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-    github_token: ${{ secrets.GITHUB_TOKEN }}
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+
+# Move the major version tag (v1) to latest
+git tag -fa v1 -m "Update v1 to v1.0.0"
+git push origin v1 --force
 ```
 
-**Vue.js/TypeScript project** — same action, different `CLAUDE.md`:
-```yaml
-# Same action, your CLAUDE.md has Vue/TS-specific rules
-- name: Claude Code Review
-  uses: ./.github/actions/review
-  with:
-    claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-    github_token: ${{ secrets.GITHUB_TOKEN }}
-```
-
-**Extra prompt for one-off rules:**
-```yaml
-- name: Claude Code Review
-  uses: ./.github/actions/review
-  with:
-    claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-    github_token: ${{ secrets.GITHUB_TOKEN }}
-    extra_prompt: "Pay special attention to SQL injection in this PR"
-```
+Users on `@v1` automatically get the latest patch.

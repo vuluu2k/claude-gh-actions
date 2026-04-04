@@ -1,0 +1,18 @@
+# builderx_spa — Vue 3 / Vite / Pinia
+review:
+  ignore_patterns:
+    - "src/i18n/locales/*.json"
+    - "tinymce/**"
+    - "public/**"
+    - "*.min.js"
+    - "*.min.css"
+    - "dist/**"
+  include_patterns: []
+  extra_rules:
+    - "No console.log() — use console.warn() or console.error()"
+    - "Use design system components from src/components/design/ — do not create ad-hoc UI"
+    - "Use existing API composables (useApiget, useApipost) or axiosClient — do not create new HTTP utils"
+    - "Use Pinia stores for shared state — do not use provide/inject for cross-component data"
+    - "Clean up event listeners, timers, and subscriptions in onUnmounted"
+    - "Use @/ path alias for imports"
+    - "Prettier: 120 char, single quotes, no semicolons, 2-space indent"
