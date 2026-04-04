@@ -1,0 +1,187 @@
+name: "Claude Code Review"
+description: "Automated PR code review using Claude Code with inline comments and structured summary — optimized for Elixir/Phoenix/Citus projects"
+author: "pancake-vn"
+
+branding:
+  icon: "code"
+  color: "purple"
+
+inputs:
+  claude_token:
+    description: "Claude OAuth token (from `claude setup-token`)"
+    required: true
+  github_token:
+    description: "GitHub token for PR operations"
+    required: true
+  pr_number:
+    description: "PR number to review (auto-detected from event context if not provided)"
+    required: false
+    default: ""
+  max_turns:
+    description: "Maximum agentic turns for Claude"
+    required: false
+    default: "30"
+  model:
+    description: "Claude model to use"
+    required: false
+    default: "claude-sonnet-4-20250514"
+  extra_prompt:
+    description: "Additional review instructions appended to the prompt (per-repo rules)"
+    required: false
+    default: ""
+
+outputs:
+  total_cost_usd:
+    description: "Total cost in USD"
+    value: ${{ steps.review.outputs.cost }}
+  num_turns:
+    description: "Number of agentic turns used"
+    value: ${{ steps.review.outputs.turns }}
+  session_id:
+    description: "Claude session ID (for resuming)"
+    value: ${{ steps.review.outputs.session }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Add eyes reaction to trigger comment
+      if: github.event_name == 'issue_comment'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        gh api repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions \
+          --method POST -f content=eyes || true
+
+    - name: Determine PR number
+      id: pr
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.pr_number }}" ]; then
+          echo "number=${{ inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+        elif [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+        elif [ "${{ github.event_name }}" = "issue_comment" ]; then
+          echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "::error::Cannot determine PR number. Provide pr_number input."
+          exit 1
+        fi
+
+    - name: Skip bot and draft PRs
+      id: skip
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        PR_DATA=$(gh pr view ${{ steps.pr.outputs.number }} --json author,isDraft)
+        IS_DRAFT=$(echo "$PR_DATA" | jq -r '.isDraft')
+        AUTHOR=$(echo "$PR_DATA" | jq -r '.author.login')
+
+        if [ "$IS_DRAFT" = "true" ]; then
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::Skipping review for draft PR"
+        elif [[ "$AUTHOR" == *"bot"* ]] || [[ "$AUTHOR" == *"dependabot"* ]]; then
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::Skipping review for bot PR"
+        else
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Checkout PR branch (for comment triggers)
+      if: github.event_name == 'issue_comment' && steps.skip.outputs.skip != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: gh pr checkout ${{ steps.pr.outputs.number }}
+
+    - name: Install Claude Code
+      if: steps.skip.outputs.skip != 'true'
+      shell: bash
+      run: |
+        if ! command -v claude &> /dev/null; then
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.claude/bin" >> "$GITHUB_PATH"
+        fi
+
+    - name: Setup Claude authentication
+      if: steps.skip.outputs.skip != 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/.claude
+        cat > ~/.claude.json << 'AUTHEOF'
+        {
+          "hasCompletedOnboarding": true,
+          "theme": "dark"
+        }
+        AUTHEOF
+
+    - name: Review PR
+      id: review
+      if: steps.skip.outputs.skip != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_token }}
+        PR_NUMBER: ${{ steps.pr.outputs.number }}
+        REPO: ${{ github.repository }}
+        EXTRA_PROMPT: ${{ inputs.extra_prompt }}
+      run: |
+        PROMPT_FILE="${{ github.action_path }}/prompts/review-pr.md"
+        if [ ! -f "$PROMPT_FILE" ]; then
+          echo "::error::Review prompt not found at $PROMPT_FILE. Is the subtree set up correctly?"
+          exit 1
+        fi
+        REVIEW_PROMPT=$(cat "$PROMPT_FILE")
+
+        claude -p "Review PR #${PR_NUMBER} in repository ${REPO}. Use gh CLI for all GitHub operations. The GH_TOKEN is already configured for bot identity (github-actions[bot]).
+
+        ${REVIEW_PROMPT}
+
+        ${EXTRA_PROMPT}" \
+          --model ${{ inputs.model }} \
+          --allowedTools "Bash(gh *)" \
+          --allowedTools "Bash(jq *)" \
+          --allowedTools "Bash(cat *)" \
+          --allowedTools "Bash(rm /tmp/*)" \
+          --allowedTools "Edit(/tmp/**)" \
+          --allowedTools "Read" \
+          --allowedTools "Grep" \
+          --allowedTools "Glob" \
+          --max-turns ${{ inputs.max_turns }} \
+          --output-format json | tee /tmp/claude-review-output.json
+
+        # Extract outputs
+        echo "cost=$(jq -r '.total_cost_usd // "0"' /tmp/claude-review-output.json)" >> "$GITHUB_OUTPUT"
+        echo "turns=$(jq -r '.num_turns // "0"' /tmp/claude-review-output.json)" >> "$GITHUB_OUTPUT"
+        echo "session=$(jq -r '.session_id // ""' /tmp/claude-review-output.json)" >> "$GITHUB_OUTPUT"
+
+    - name: Log token usage
+      if: always() && steps.skip.outputs.skip != 'true'
+      shell: bash
+      run: |
+        if [ -f /tmp/claude-review-output.json ]; then
+          echo "## Claude Review Token Usage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+
+          INPUT_TOKENS=$(jq -r '.usage.input_tokens // "N/A"' /tmp/claude-review-output.json)
+          OUTPUT_TOKENS=$(jq -r '.usage.output_tokens // "N/A"' /tmp/claude-review-output.json)
+          COST=$(jq -r '.total_cost_usd // "N/A"' /tmp/claude-review-output.json)
+          TURNS=$(jq -r '.num_turns // "N/A"' /tmp/claude-review-output.json)
+          SESSION=$(jq -r '.session_id // "N/A"' /tmp/claude-review-output.json)
+
+          echo "| Input tokens | $INPUT_TOKENS |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Output tokens | $OUTPUT_TOKENS |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total tokens | $(( ${INPUT_TOKENS:-0} + ${OUTPUT_TOKENS:-0} )) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Cost (USD) | \$$COST |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Turns | $TURNS |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Session ID | \`$SESSION\` |" >> "$GITHUB_STEP_SUMMARY"
+
+          echo ""
+          echo "=== Token Usage ==="
+          echo "Input: $INPUT_TOKENS | Output: $OUTPUT_TOKENS | Cost: \$$COST | Turns: $TURNS"
+        else
+          echo "No review output found" >> "$GITHUB_STEP_SUMMARY"
+        fi
