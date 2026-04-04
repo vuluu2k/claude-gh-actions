@@ -1,60 +1,62 @@
 # Claude GH Actions
 
-Reusable GitHub Action — automated PR code review bằng Claude Code. Hoạt động với **mọi tech stack**, không cần sửa action. Project-specific rules được load từ `CLAUDE.md` và `.claude/review-config.yml` của từng repo lúc runtime.
+Reusable GitHub Action for automated PR code review using Claude Code. Works with **any tech stack** — project-specific rules are loaded from `CLAUDE.md` and `.claude/review-config.yml` at runtime.
 
-## Cách hoạt động
+[Tiếng Việt](./README_VI.md)
+
+## How It Works
 
 ```
-claude-gh-actions (action chung)           Repo của bạn (rules riêng)
-────────────────────────────────           ─────────────────────────────
-action.yml      → setup + chạy Claude      CLAUDE.md              → architecture rules
-prompts/        → quy trình review         .claude/review-config.yml → ignore/include patterns
-                                           extra_prompt (optional) → chỉ dẫn thêm
+claude-gh-actions (shared action)          Your repo (project-specific)
+──────────────────────────────────         ───────────────────────────────
+action.yml      → setup + run Claude       CLAUDE.md              → architecture rules
+prompts/        → review methodology       .claude/review-config.yml → ignore/include patterns
+                                           extra_prompt (optional) → additional instructions
 ```
 
-Claude sẽ đọc `CLAUDE.md` + `review-config.yml` trong repo của bạn trước khi review. Nếu không có, Claude tự detect stack từ config files (`package.json`, `mix.exs`, `go.mod`...) và review theo generic best practices.
+Claude reads your repo's `CLAUDE.md` + `review-config.yml` before reviewing. If neither exists, Claude auto-detects the stack from config files (`package.json`, `mix.exs`, `go.mod`...) and reviews using generic best practices.
 
 ---
 
-## Setup — 3 bước
+## Setup — 3 Steps
 
-### Bước 1: Lấy Claude OAuth Token
+### Step 1: Get Claude OAuth Token
 
-Chạy trên máy local (cần đăng nhập Claude):
+Run locally (requires Claude login):
 
 ```bash
 claude setup-token
 ```
 
-Copy token output.
+Copy the token output.
 
-### Bước 2: Thêm secret vào repo
+### Step 2: Add secret to your repo
 
-Vào GitHub repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
 
 | Name | Value |
 |------|-------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Token từ bước 1 |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Token from step 1 |
 
-> `GITHUB_TOKEN` không cần thêm — GitHub tự cung cấp.
+> `GITHUB_TOKEN` is automatically provided by GitHub — no need to add it.
 
-### Bước 3: Tạo workflow file
+### Step 3: Create workflow file
 
-Tạo file `.github/workflows/code-review.yml` trong repo của bạn:
+Create `.github/workflows/code-review.yml` in your repo:
 
 ```yaml
 name: Claude Code Review
 
 on:
-  # Auto review khi PR mở hoặc có commit mới
+  # Auto review when PR is opened or new commits are pushed
   pull_request:
     types: [opened, reopened, synchronize]
 
-  # Review khi comment "/review" trong PR
+  # Review when someone comments "/review" in the PR
   issue_comment:
     types: [created]
 
-  # Review thủ công từ Actions tab
+  # Manual review from Actions tab
   workflow_dispatch:
     inputs:
       pr_number:
@@ -65,7 +67,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
 
-    # Chỉ chạy khi: PR event, manual trigger, hoặc comment "/review"
+    # Run on: PR events, manual trigger, or "/review" comment
     if: |
       github.event_name == 'pull_request' ||
       github.event_name == 'workflow_dispatch' ||
@@ -91,18 +93,18 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-**Done.** Mở PR là Claude tự review.
+**Done.** Open a PR and Claude will review it automatically.
 
 ---
 
-## Cấu trúc files trong repo sau khi setup
+## File Structure After Setup
 
 ```
 your-repo/
 ├── .github/
 │   └── workflows/
-│       └── code-review.yml          # ← Bước 3 tạo file này
-├── CLAUDE.md                         # ← (Optional) Rules riêng cho project
+│       └── code-review.yml          # ← Step 3: create this file
+├── CLAUDE.md                         # ← (Optional) Project-specific rules
 ├── .claude/
 │   └── review-config.yml            # ← (Optional) Ignore/include patterns
 └── ... (source code)
@@ -110,41 +112,41 @@ your-repo/
 
 ---
 
-## Tuỳ chỉnh review cho từng project
+## Customizing Reviews Per Project
 
-### Cấp 1: Không tuỳ chỉnh gì (mọi repo đều dùng được)
+### Level 1: No customization (works for any repo)
 
-Chỉ cần workflow file ở bước 3. Claude sẽ:
-- Tự detect stack từ config files (`package.json`, `mix.exs`, `go.mod`...)
-- Đọc `README.md` để hiểu project
-- Đọc 2-3 file source để infer code style
-- Review dựa trên universal rules: security, bugs, performance, error handling
+Just the workflow file from step 3. Claude will:
+- Auto-detect stack from config files (`package.json`, `mix.exs`, `go.mod`...)
+- Read `README.md` for project overview
+- Scan 2-3 source files to infer code style
+- Review based on universal rules: security, bugs, performance, error handling
 
-### Cấp 2: Thêm `.claude/review-config.yml` (ignore files + extra rules)
+### Level 2: Add `.claude/review-config.yml` (ignore files + extra rules)
 
-Tạo file `.claude/review-config.yml` ở root repo:
+Create `.claude/review-config.yml` at repo root:
 
 ```yaml
 review:
-  # Files không cần review (merge với default skip patterns)
+  # Files to skip (merged with default skip patterns)
   ignore_patterns:
     - "docs/**"
     - "scripts/**"
     - "*.config.js"
 
-  # Files bắt buộc review dù nằm trong skip patterns
+  # Files to force-review even if they match skip patterns
   include_patterns:
     - "migrations/*.sql"
 
-  # Rules review thêm (Claude sẽ check + enforce)
+  # Additional rules for Claude to check and enforce
   extra_rules:
-    - "Rule 1 của project"
-    - "Rule 2 của project"
+    - "Project rule 1"
+    - "Project rule 2"
 ```
 
-### Cấp 3: Thêm `CLAUDE.md` (full project rules — recommended)
+### Level 3: Add `CLAUDE.md` (full project rules — recommended)
 
-Tạo `CLAUDE.md` ở root repo. Đây là file mạnh nhất — Claude sẽ đọc và enforce mọi rule trong này. Viết bằng Markdown, tự do format:
+Create `CLAUDE.md` at repo root. This is the most powerful option — Claude reads and enforces every rule in this file. Write in Markdown, free-form:
 
 ```markdown
 # Project Rules
@@ -162,11 +164,11 @@ Tạo `CLAUDE.md` ở root repo. Đây là file mạnh nhất — Claude sẽ đ
 - Validate all user input
 ```
 
-> **Tip**: Nếu repo đã có `CLAUDE.md` cho Claude Code (CLI), thì action này tự động dùng luôn — không cần tạo thêm gì.
+> **Tip**: If your repo already has a `CLAUDE.md` for Claude Code (CLI), this action uses it automatically — no extra setup needed.
 
-### Cấp 4: `extra_prompt` trong workflow (one-off instructions)
+### Level 4: `extra_prompt` in workflow (one-off instructions)
 
-Thêm `extra_prompt` khi cần chỉ dẫn thêm ở level workflow:
+Add `extra_prompt` for workflow-level instructions:
 
 ```yaml
 - name: Claude Code Review
@@ -175,11 +177,11 @@ Thêm `extra_prompt` khi cần chỉ dẫn thêm ở level workflow:
     claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     github_token: ${{ secrets.GITHUB_TOKEN }}
     extra_prompt: |
-      Focus thêm vào SQL injection trong PR này.
-      Không review file tests.
+      Pay extra attention to SQL injection in this PR.
+      Skip test files.
 ```
 
-### Thứ tự ưu tiên rules
+### Rule Priority Order
 
 ```
 CLAUDE.md > review-config.yml extra_rules > extra_prompt > auto-detected conventions > generic
@@ -187,11 +189,11 @@ CLAUDE.md > review-config.yml extra_rules > extra_prompt > auto-detected convent
 
 ---
 
-## Ví dụ cấu hình cho các project thực tế
+## Real-World Configuration Examples
 
-### Ví dụ 1: Elixir/Phoenix API (builderx_api)
+### Example 1: Elixir/Phoenix API
 
-**`.github/workflows/code-review.yml`** — workflow chuẩn, không thay đổi:
+**`.github/workflows/code-review.yml`** — standard workflow, no changes needed:
 
 ```yaml
 name: Claude Code Review
@@ -225,7 +227,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-**`.claude/review-config.yml`** — tuỳ chỉnh cho Elixir:
+**`.claude/review-config.yml`** — Elixir-specific config:
 
 ```yaml
 review:
@@ -240,7 +242,7 @@ review:
   extra_rules:
     - "All sharded table queries MUST include site_id in WHERE clause"
     - "All joins between sharded tables MUST include site_id in ON condition"
-    - "Use BuilderxApi.Citus for tenant data, BuilderxApi.Repo for global"
+    - "Use Citus repo for tenant data, Repo for global tables"
     - "Context functions for tenant data MUST take site_id as first argument"
     - "Controllers must return FallbackController tuples"
     - "No Repo calls in controllers — use context modules"
@@ -248,15 +250,13 @@ review:
     - "RabbitMQ/Kafka consumers must be idempotent"
 ```
 
-**`CLAUDE.md`** — đã có sẵn (32 architecture rules) → Claude tự đọc.
-
 ---
 
-### Ví dụ 2: Vue 3 SPA (builderx_spa)
+### Example 2: Vue 3 SPA
 
-**`.github/workflows/code-review.yml`** — **giống hệt** ví dụ 1.
+**`.github/workflows/code-review.yml`** — **identical** to example 1.
 
-**`.claude/review-config.yml`** — tuỳ chỉnh cho Vue:
+**`.claude/review-config.yml`** — Vue-specific config:
 
 ```yaml
 review:
@@ -280,16 +280,16 @@ review:
 
 ---
 
-### Ví dụ 3: Go microservice (không có CLAUDE.md)
+### Example 3: Go Microservice (no CLAUDE.md)
 
-**`.github/workflows/code-review.yml`** — **giống hệt** ví dụ 1.
+**`.github/workflows/code-review.yml`** — **identical** to example 1.
 
-**Không cần thêm file nào**. Claude sẽ tự:
-- Detect Go từ `go.mod`
-- Đọc `README.md`
-- Review theo Go best practices (error handling, goroutine leaks, defer usage...)
+**No extra files needed.** Claude will:
+- Detect Go from `go.mod`
+- Read `README.md`
+- Review using Go best practices (error handling, goroutine leaks, defer usage...)
 
-**(Optional)** Thêm `.claude/review-config.yml` nếu muốn:
+**(Optional)** Add `.claude/review-config.yml`:
 
 ```yaml
 review:
@@ -305,9 +305,9 @@ review:
 
 ---
 
-### Ví dụ 4: Python Django (không có CLAUDE.md)
+### Example 4: Python Django (no CLAUDE.md)
 
-**`.github/workflows/code-review.yml`** — **giống hệt** ví dụ 1.
+**`.github/workflows/code-review.yml`** — **identical** to example 1.
 
 **(Optional)** `.claude/review-config.yml`:
 
@@ -327,55 +327,55 @@ review:
 
 ---
 
-### Ví dụ 5: React/Next.js (chỉ cần workflow, không tuỳ chỉnh)
+### Example 5: React/Next.js (zero config)
 
-**`.github/workflows/code-review.yml`** — **giống hệt** ví dụ 1. Xong.
+**`.github/workflows/code-review.yml`** — **identical** to example 1. That's it.
 
-Claude tự detect từ `package.json` + `next.config.*` và review theo React/Next.js best practices.
+Claude auto-detects from `package.json` + `next.config.*` and reviews using React/Next.js best practices.
 
 ---
 
-## Inputs reference
+## Inputs Reference
 
-| Input | Required | Default | Mô tả |
-|-------|----------|---------|-------|
-| `claude_token` | **Yes** | — | Claude OAuth token (từ `claude setup-token`) |
-| `github_token` | **Yes** | — | GitHub token (dùng `${{ secrets.GITHUB_TOKEN }}`) |
-| `pr_number` | No | auto-detect | Số PR — tự detect từ event, chỉ cần khi `workflow_dispatch` |
-| `max_turns` | No | `30` | Số lượt tối đa Claude được thao tác |
-| `model` | No | `claude-sonnet-4-20250514` | Model Claude sử dụng |
-| `review_prompt` | No | built-in | Override toàn bộ review prompt (advanced) |
-| `extra_prompt` | No | — | Thêm instructions vào cuối prompt |
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `claude_token` | **Yes** | — | Claude OAuth token (from `claude setup-token`) |
+| `github_token` | **Yes** | — | GitHub token (use `${{ secrets.GITHUB_TOKEN }}`) |
+| `pr_number` | No | auto-detect | PR number — auto-detected from event, only needed for `workflow_dispatch` |
+| `max_turns` | No | `30` | Maximum agentic turns for Claude |
+| `model` | No | `claude-sonnet-4-20250514` | Claude model to use |
+| `review_prompt` | No | built-in | Override the entire review prompt (advanced) |
+| `extra_prompt` | No | — | Append additional instructions to the prompt |
 
-### Đổi model
-
-```yaml
-- uses: vuluu2k/claude-gh-actions@v1
-  with:
-    claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-    github_token: ${{ secrets.GITHUB_TOKEN }}
-    model: "claude-opus-4-6"        # Dùng Opus cho review sâu hơn (tốn hơn)
-```
-
-### Giới hạn turns
+### Change model
 
 ```yaml
 - uses: vuluu2k/claude-gh-actions@v1
   with:
     claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     github_token: ${{ secrets.GITHUB_TOKEN }}
-    max_turns: 15                   # Giới hạn 15 turns (nhanh hơn, rẻ hơn)
+    model: "claude-opus-4-6"        # Use Opus for deeper review (higher cost)
 ```
 
-## Outputs reference
+### Limit turns
 
-| Output | Mô tả |
-|--------|-------|
-| `total_cost_usd` | Chi phí review (USD) |
-| `num_turns` | Số turns đã dùng |
-| `session_id` | Session ID (dùng để resume nếu cần) |
+```yaml
+- uses: vuluu2k/claude-gh-actions@v1
+  with:
+    claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    github_token: ${{ secrets.GITHUB_TOKEN }}
+    max_turns: 15                   # Cap at 15 turns (faster, cheaper)
+```
 
-Đọc outputs:
+## Outputs Reference
+
+| Output | Description |
+|--------|-------------|
+| `total_cost_usd` | Review cost (USD) |
+| `num_turns` | Number of turns used |
+| `session_id` | Session ID (for resuming if needed) |
+
+Reading outputs:
 
 ```yaml
 - name: Claude Code Review
@@ -391,15 +391,15 @@ Claude tự detect từ `package.json` + `next.config.*` và review theo React/N
 
 ---
 
-## Cách trigger review
+## Triggering Reviews
 
-| Cách | Khi nào |
-|------|---------|
-| **Tự động** | PR opened, reopened, hoặc push commit mới |
-| **Comment** | Gõ `/review` trong PR comment |
-| **Thủ công** | Actions tab → Claude Code Review → Run workflow → nhập PR number |
+| Method | When |
+|--------|------|
+| **Automatic** | PR opened, reopened, or new commits pushed |
+| **Comment** | Type `/review` in a PR comment |
+| **Manual** | Actions tab → Claude Code Review → Run workflow → enter PR number |
 
-### Chỉ trigger khi comment (không auto)
+### Comment-only trigger (no auto-review)
 
 ```yaml
 on:
@@ -414,7 +414,7 @@ jobs:
     # ...
 ```
 
-### Chỉ trigger manual
+### Manual-only trigger
 
 ```yaml
 on:
@@ -437,29 +437,29 @@ jobs:
 
 ---
 
-## Auto-skip
+## Auto-Skip
 
-Action tự động bỏ qua khi:
-- PR là **draft**
-- PR author là **bot** (dependabot, renovate, etc.)
+The action automatically skips review when:
+- PR is a **draft**
+- PR author is a **bot** (dependabot, renovate, etc.)
 
-Không cần cấu hình gì.
-
----
-
-## Severity levels
-
-Review comments sẽ có badge severity:
-
-| Badge | Ý nghĩa | Hành động |
-|-------|---------|-----------|
-| ![Major](https://img.shields.io/badge/Major-red?style=flat-square) | Bug, security, data loss, vi phạm architecture | **Phải fix** trước merge |
-| ![Minor](https://img.shields.io/badge/Minor-orange?style=flat-square) | Design issue, thiếu error handling, regression | **Nên fix** hoặc giải thích |
-| ![Nitpick](https://img.shields.io/badge/Nitpick-cyan?style=flat-square) | Style, naming, suggestion nhỏ | **Tuỳ chọn** |
+No configuration needed.
 
 ---
 
-## Usage methods
+## Severity Levels
+
+Review comments include severity badges:
+
+| Badge | Meaning | Action Required |
+|-------|---------|-----------------|
+| ![Major](https://img.shields.io/badge/Major-red?style=flat-square) | Bug, security, data loss, architecture violation | **Must fix** before merge |
+| ![Minor](https://img.shields.io/badge/Minor-orange?style=flat-square) | Design issue, missing error handling, regression | **Should fix** or explain |
+| ![Nitpick](https://img.shields.io/badge/Nitpick-cyan?style=flat-square) | Style, naming, minor suggestion | **Optional** |
+
+---
+
+## Usage Methods
 
 ### Method 1: Direct reference (recommended)
 
@@ -467,35 +467,35 @@ Review comments sẽ có badge severity:
 uses: vuluu2k/claude-gh-actions@v1
 ```
 
-Không cần copy file nào vào repo. Version pinned bằng tag.
+No files to copy into your repo. Version pinned by tag.
 
-### Method 2: Git subtree (nếu cần sửa prompt)
+### Method 2: Git subtree (if you need to modify the prompt)
 
 ```bash
-# Thêm vào repo
+# Add to your repo
 git subtree add --prefix=.github/actions/review \
     git@github.com:vuluu2k/claude-gh-actions.git main --squash
 
-# Dùng trong workflow
+# Use in workflow
 uses: ./.github/actions/review
 
-# Cập nhật
+# Update
 git subtree pull --prefix=.github/actions/review \
     git@github.com:vuluu2k/claude-gh-actions.git main --squash
 ```
 
 ---
 
-## Release quy trình (cho maintainer)
+## Releasing (for maintainers)
 
 ```bash
-# Tag version mới
+# Tag new version
 git tag -a v1.0.0 -m "Release v1.0.0"
 git push origin v1.0.0
 
-# Move major version tag (v1) đến latest
+# Move major version tag (v1) to latest
 git tag -fa v1 -m "Update v1 to v1.0.0"
 git push origin v1 --force
 ```
 
-Tất cả repo dùng `@v1` sẽ tự động nhận bản mới. Pin cụ thể: `@v1.0.0`.
+All repos using `@v1` automatically get the latest patch. Pin a specific version with `@v1.0.0`.
