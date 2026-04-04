@@ -154,6 +154,7 @@ runs:
           --allowedTools "Bash(jq *)" \
           --allowedTools "Bash(cat *)" \
           --allowedTools "Bash(rm /tmp/*)" \
+          --allowedTools "Write(/tmp/**)" \
           --allowedTools "Edit(/tmp/**)" \
           --allowedTools "Read" \
           --allowedTools "Grep" \
