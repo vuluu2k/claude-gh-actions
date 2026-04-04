@@ -24,7 +24,7 @@ inputs:
   model:
     description: "Claude model to use"
     required: false
-    default: "claude-sonnet-4-20250514"
+    default: "claude-opus-4-6"
   review_prompt:
     description: "Override the default review prompt. If empty, uses built-in prompts/review-pr.md"
     required: false
