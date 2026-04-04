@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Reusable GitHub Action for automated PR code review using Claude Code CLI. Consumed by other repos via `uses: pancake-vn/claude-gh-actions@v1` — this repo is the action source, not a consumer.
+Reusable GitHub Action for automated PR code review using Claude Code CLI. Consumed by other repos via `uses: vuluu2k/claude-gh-actions@v1` — this repo is the action source, not a consumer.
 
 ## Repository Structure
 

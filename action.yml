@@ -1,6 +1,6 @@
 name: "Claude Code Review"
 description: "Automated PR code review using Claude Code with inline comments and structured summary"
-author: "pancake-vn"
+author: "vuluu2k"
 
 branding:
   icon: "code"

@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 0
 
       - name: Claude Code Review
-        uses: pancake-vn/claude-gh-actions@v1
+        uses: vuluu2k/claude-gh-actions@v1
         with:
           claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}

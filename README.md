@@ -85,7 +85,7 @@ jobs:
           fetch-depth: 0
 
       - name: Claude Code Review
-        uses: pancake-vn/claude-gh-actions@v1
+        uses: vuluu2k/claude-gh-actions@v1
         with:
           claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -170,7 +170,7 @@ Thêm `extra_prompt` khi cần chỉ dẫn thêm ở level workflow:
 
 ```yaml
 - name: Claude Code Review
-  uses: pancake-vn/claude-gh-actions@v1
+  uses: vuluu2k/claude-gh-actions@v1
   with:
     claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -219,7 +219,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: pancake-vn/claude-gh-actions@v1
+      - uses: vuluu2k/claude-gh-actions@v1
         with:
           claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -350,7 +350,7 @@ Claude tự detect từ `package.json` + `next.config.*` và review theo React/N
 ### Đổi model
 
 ```yaml
-- uses: pancake-vn/claude-gh-actions@v1
+- uses: vuluu2k/claude-gh-actions@v1
   with:
     claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -360,7 +360,7 @@ Claude tự detect từ `package.json` + `next.config.*` và review theo React/N
 ### Giới hạn turns
 
 ```yaml
-- uses: pancake-vn/claude-gh-actions@v1
+- uses: vuluu2k/claude-gh-actions@v1
   with:
     claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -380,7 +380,7 @@ Claude tự detect từ `package.json` + `next.config.*` và review theo React/N
 ```yaml
 - name: Claude Code Review
   id: review
-  uses: pancake-vn/claude-gh-actions@v1
+  uses: vuluu2k/claude-gh-actions@v1
   with:
     claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -428,7 +428,7 @@ jobs:
   review:
     # ...
     steps:
-      - uses: pancake-vn/claude-gh-actions@v1
+      - uses: vuluu2k/claude-gh-actions@v1
         with:
           claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -464,7 +464,7 @@ Review comments sẽ có badge severity:
 ### Method 1: Direct reference (recommended)
 
 ```yaml
-uses: pancake-vn/claude-gh-actions@v1
+uses: vuluu2k/claude-gh-actions@v1
 ```
 
 Không cần copy file nào vào repo. Version pinned bằng tag.
@@ -474,14 +474,14 @@ Không cần copy file nào vào repo. Version pinned bằng tag.
 ```bash
 # Thêm vào repo
 git subtree add --prefix=.github/actions/review \
-    git@github.com:pancake-vn/claude-gh-actions.git main --squash
+    git@github.com:vuluu2k/claude-gh-actions.git main --squash
 
 # Dùng trong workflow
 uses: ./.github/actions/review
 
 # Cập nhật
 git subtree pull --prefix=.github/actions/review \
-    git@github.com:pancake-vn/claude-gh-actions.git main --squash
+    git@github.com:vuluu2k/claude-gh-actions.git main --squash
 ```
 
 ---
