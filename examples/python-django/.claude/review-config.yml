@@ -1,0 +1,15 @@
+# Python Django — no CLAUDE.md needed
+review:
+  ignore_patterns:
+    - "*/migrations/*.py"
+    - "static/**"
+    - "media/**"
+    - "*.pyc"
+    - "htmlcov/**"
+  include_patterns: []
+  extra_rules:
+    - "Use Django ORM — no raw SQL unless justified"
+    - "All views must check permissions via decorators or mixins"
+    - "No print() in production code — use logging module"
+    - "Querysets must be filtered — no Model.objects.all() in views"
+    - "Use F() and Q() objects for complex queries"

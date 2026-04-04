@@ -20,13 +20,17 @@ These rules apply to **all steps** when running in CI/CD:
 
 ## Project Context Discovery
 
-Before starting the review, **read project-level instructions** to understand repo-specific rules:
+Before starting the review, **build project context** using whatever is available:
 
-1. **Check for `CLAUDE.md`** at repo root — this contains architecture rules, conventions, and constraints specific to this project. Follow these rules strictly when reviewing.
-2. **Check for `.claude/review-config.yml`** — per-repo review overrides (ignore patterns, include patterns, extra rules).
-3. **Auto-detect tech stack** from file extensions in the PR (`.ex`/`.exs` = Elixir, `.ts`/`.tsx` = TypeScript, `.vue` = Vue.js, `.go` = Go, `.py` = Python, `.dart` = Dart, etc.) and adapt review focus accordingly.
+1. **Check for `CLAUDE.md`** at repo root — if exists, follow its rules strictly when reviewing.
+2. **Check for `.claude/review-config.yml`** — if exists, merge ignore/include patterns and extra rules.
+3. **If neither exists**, auto-discover context from the repo:
+   - Read `README.md` for project overview, stack, and conventions
+   - Check config files to detect stack: `mix.exs` (Elixir), `package.json` (JS/TS), `go.mod` (Go), `Cargo.toml` (Rust), `pyproject.toml`/`requirements.txt` (Python), `pubspec.yaml` (Dart), `Gemfile` (Ruby), `pom.xml`/`build.gradle` (Java)
+   - Scan directory structure for patterns: `src/`, `lib/`, `app/`, `test/`, `spec/`
+   - Check for linter configs: `.eslintrc*`, `.rubocop.yml`, `.golangci.yml`, `credo.exs`, `ruff.toml`
 
-If `CLAUDE.md` exists, its rules take priority over generic best practices.
+**Priority**: `CLAUDE.md` rules > `review-config.yml` extra_rules > auto-detected conventions > generic best practices.
 
 ## Process
 
@@ -49,14 +53,27 @@ digraph review_flow {
 }
 ```
 
-### Step 0: Read Project Rules
+### Step 0: Build Project Context
 
-Before anything else:
+Before anything else, gather project context in this order:
+
 ```
-1. Read CLAUDE.md (if exists) — extract architecture rules, naming conventions, constraints
-2. Read .claude/review-config.yml (if exists) — extract ignore/include patterns, extra rules
-3. These rules apply to ALL subsequent steps
+1. Try: Read CLAUDE.md → if found, extract architecture rules, naming conventions, constraints
+2. Try: Read .claude/review-config.yml → if found, extract ignore/include patterns, extra rules
+3. If NEITHER found (no CLAUDE.md, no review-config.yml):
+   a. Read README.md for project overview
+   b. Detect stack from config files (mix.exs, package.json, go.mod, etc.)
+   c. Check for linter configs (.eslintrc*, .rubocop.yml, credo.exs, etc.)
+   d. Scan 2-3 existing source files to understand code style and patterns
+4. Apply discovered context to ALL subsequent steps
 ```
+
+**No CLAUDE.md? Still review effectively** using auto-detected stack + these universal rules:
+- Security: injection, auth bypass, hardcoded secrets, improper input validation
+- Correctness: null/nil safety, off-by-one, race conditions, unhandled errors
+- Performance: N+1 queries, unbounded loops, memory leaks, missing pagination
+- Maintainability: dead code, duplicated logic, unclear naming, missing error context
+- Concurrency: data races, deadlocks, unsafe shared state
 
 ### Step 1: Parse Input
 
@@ -142,22 +159,23 @@ For each previous review comment:
 
 | Category | Patterns |
 |----------|----------|
-| Lock files | `*.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Podfile.lock`, `Gemfile.lock` |
-| Build/output | `build/`, `dist/`, `_build/`, `deps/`, `node_modules/`, `.next/`, `.dart_tool/` |
-| Generated code | `*.g.dart`, `*.freezed.dart`, `*.generated.*`, `*.gen.*`, `*.mocks.dart`, `generated/`, `__generated__/` |
-| Assets/binary | `*.png`, `*.jpg`, `*.gif`, `*.svg`, `*.ico`, `*.woff`, `*.ttf`, `*.eot`, `*.mp4`, `*.mp3` |
-| IDE/config | `.idea/`, `.vscode/`, `*.iml`, `.elixir_ls/` |
-| Versioning | `pubspec.lock`, `*.sum`, `*.resolved` |
-| Deletion-only files | Files with `additions: 0` — nothing new to review |
+| **Lock files** | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Podfile.lock`, `Gemfile.lock`, `mix.lock`, `pubspec.lock`, `composer.lock`, `poetry.lock`, `Cargo.lock`, `go.sum`, `pnpm-lock.yaml`, `bun.lockb` |
+| **Build/output** | `build/`, `dist/`, `out/`, `target/`, `_build/`, `deps/`, `node_modules/`, `.next/`, `.nuxt/`, `.output/`, `.dart_tool/`, `__pycache__/`, `.tox/`, `vendor/` (if in lockfile-managed project) |
+| **Generated code** | `*.generated.*`, `*.gen.*`, `*.g.dart`, `*.freezed.dart`, `*.mocks.dart`, `*.pb.go`, `*.pb.ex`, `*_pb2.py`, `*.swagger.*`, `*.openapi.*`, `generated/`, `__generated__/`, `*.graphql.ts`, `*.graphql.dart` |
+| **Assets/binary** | `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.svg`, `*.ico`, `*.webp`, `*.avif`, `*.woff`, `*.woff2`, `*.ttf`, `*.eot`, `*.otf`, `*.mp4`, `*.mp3`, `*.wav`, `*.ogg`, `*.pdf`, `*.zip`, `*.tar.gz` |
+| **IDE/editor** | `.idea/`, `.vscode/`, `*.iml`, `.elixir_ls/`, `.fleet/`, `*.swp`, `*.swo`, `.DS_Store` |
+| **Minified** | `*.min.js`, `*.min.css`, `*.bundle.js`, `*.chunk.js` |
+| **Maps** | `*.map` (source maps) |
+| **Snapshots/fixtures** | `__snapshots__/`, `*.snap`, `fixtures/` (unless test-related changes) |
+| **Deletion-only** | Files with `additions: 0` — nothing new to review |
 
 **Per-repo overrides** from `.claude/review-config.yml` merge with defaults:
 ```yaml
 review:
   ignore_patterns:          # Added to defaults
-    - "assets/vendor/*"
-    - "priv/static/*"
+    - "custom/path/*"
   include_patterns:         # Force-include despite defaults
-    - "lib/generated/important_config.dart"
+    - "generated/important_file.ts"
   extra_rules:              # Additional review criteria
     - "Custom rule from project"
 ```
@@ -210,7 +228,7 @@ When the PR uses a framework function, shared utility, or library call, **read i
 
 #### 5c: Check for stale data in async/scheduled contexts
 
-When code stores data in a payload consumed **later** (cron tasks, job queues, message queues):
+When code stores data in a payload consumed **later** (cron tasks, job queues, message queues, delayed events):
 1. Can the stored data change between creation and execution time?
 2. Can other code paths modify the same data concurrently?
 3. Should the worker read fresh data at execution time instead of using the stored value?
@@ -218,7 +236,7 @@ When code stores data in a payload consumed **later** (cron tasks, job queues, m
 #### 5d: Verify edge cases in arithmetic/time calculations
 
 When the PR does arithmetic with values from external sources (APIs, user input, DB):
-1. Can the input be nil/null/undefined?
+1. Can the input be nil/null/undefined/NaN?
 2. Can the result be negative, zero, or unexpectedly large?
 3. What are the boundary values?
 
@@ -226,7 +244,7 @@ Provide concrete guard suggestions, not just "add a nil check."
 
 #### 5e: Check for orphaned/leaked resources
 
-When the PR creates resources (scheduled tasks, background processes, DB records):
+When the PR creates resources (scheduled tasks, background processes, subscriptions, DB records, timers, event listeners):
 1. Is the old resource cleaned up when a new one is created?
 2. What happens if the lookup key changes between calls? (orphaned duplicates)
 3. Is there a cleanup path when the feature is disabled/removed?
@@ -238,23 +256,30 @@ For features that self-schedule (task creates next task) or chain operations:
 2. Is there a retry or re-schedule on error?
 3. Are all error branches handled?
 
-#### 5g: Apply CLAUDE.md rules
+#### 5g: Apply project-specific rules
 
-If the project has a `CLAUDE.md`, cross-check every changed file against its rules. Common project-specific concerns:
-- Database sharding constraints (e.g., distribution columns in queries/joins)
+**If CLAUDE.md exists**, cross-check every changed file against its rules. Common project-specific concerns:
+- Database constraints (sharding, partitioning, required columns in queries)
 - Required function signatures (e.g., tenant ID as first argument)
-- Architecture boundaries (e.g., no direct DB calls in controllers)
+- Architecture boundaries (e.g., no direct DB calls in controllers, layered access)
 - Response format requirements
 - Naming conventions
+- Security rules
 
 Flag violations as **Major** if they break architecture invariants, **Minor** if they break conventions.
+
+**If no CLAUDE.md**, infer conventions from the codebase:
+- Read 2-3 similar existing files to understand patterns (e.g., how other controllers are structured, how other functions handle errors)
+- Check if the PR follows the same patterns as existing code
+- Don't enforce conventions you can't verify — only flag clear inconsistencies with existing code
+- Focus on universal issues: security, correctness, performance, error handling
 
 ### Step 6: Analyze Changed Files
 
 For each file that passed Step 3 filtering:
 1. Read the diff hunks carefully
 2. Apply deep analysis findings from Step 5
-3. Identify issues based on review focus (Step 4) + CLAUDE.md rules (Step 5g) + any `extra_rules` from config
+3. Identify issues based on review focus (Step 4) + project rules from Step 5g (CLAUDE.md or inferred) + any `extra_rules` from config
 
 **CRITICAL RULES:**
 - Only comment on lines that appear in the diff hunks. Lines outside hunks cause **422 Validation Failed** from GitHub API.
@@ -395,22 +420,22 @@ Only 3 severity levels:
 **Files reviewed**: N | **Issues found**: N major, N minor, N nitpick
 
 ### Findings
-1. ![Major](https://img.shields.io/badge/Major-red) Brief description (`file:42`)
+1. ![Major](https://img.shields.io/badge/Major-red) Brief description (`path/to/file:42`)
    - *Evidence*: traced caller X which already does Y, causing double execution
-2. ![Minor](https://img.shields.io/badge/Minor-orange) Brief description (`file:15`)
+2. ![Minor](https://img.shields.io/badge/Minor-orange) Brief description (`path/to/file:15`)
    - *Evidence*: external API may omit field Z, causing crash
-3. ![Nitpick](https://img.shields.io/badge/Nitpick-cyan) Brief description (`file:8`)
+3. ![Nitpick](https://img.shields.io/badge/Nitpick-cyan) Brief description (`path/to/file:8`)
 
 ### Previous Review Follow-up
 > Only include this section if previous review comments were found (Step 2b).
 
 | Status | File | Issue |
 |--------|------|-------|
-| :white_check_mark: Resolved | `auth.dart:42` | Null safety issue |
-| :x: Unresolved | `api.dart:15` | Missing error handling |
-| :grey_question: Outdated | `old_file.dart:8` | File no longer in diff |
+| :white_check_mark: Resolved | `src/auth.ts:42` | Null safety issue |
+| :x: Unresolved | `lib/api.ex:15` | Missing error handling |
+| :grey_question: Outdated | `old_file.py:8` | File no longer in diff |
 | :arrows_counterclockwise: Withdrawn | `config.yml:10` | Author rebuttal accepted — original comment was incorrect |
-| :speech_balloon: Discussed | `service.dart:25` | Author provided justification, acknowledged |
+| :speech_balloon: Discussed | `src/service.go:25` | Author provided justification, acknowledged |
 
 **Resolved: 2/5 | Withdrawn: 1/5 | Discussed: 1/5 | Unresolved: 1/5**
 

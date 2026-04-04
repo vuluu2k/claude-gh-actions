@@ -1,0 +1,13 @@
+# Go microservice — no CLAUDE.md needed
+review:
+  ignore_patterns:
+    - "vendor/**"
+    - "*.pb.go"
+    - "mock_*.go"
+    - "docs/**"
+  include_patterns: []
+  extra_rules:
+    - "Always check error returns — no _ for errors"
+    - "Use context.Context as first parameter"
+    - "No goroutine without cancellation/timeout"
+    - "Use structured logging (slog or zerolog) — no fmt.Println"
