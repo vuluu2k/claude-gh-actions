@@ -78,9 +78,12 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github_token }}
       run: |
-        PR_DATA=$(gh pr view ${{ steps.pr.outputs.number }} --json author,isDraft)
-        IS_DRAFT=$(echo "$PR_DATA" | jq -r '.isDraft')
-        AUTHOR=$(echo "$PR_DATA" | jq -r '.author.login')
+        mkdir -p /tmp/pr-context
+        gh pr view ${{ steps.pr.outputs.number }} \
+          --json author,isDraft,files,commits,headRefOid,baseRefName,title,body \
+          > /tmp/pr-context/pr-meta.json
+        IS_DRAFT=$(jq -r '.isDraft' /tmp/pr-context/pr-meta.json)
+        AUTHOR=$(jq -r '.author.login' /tmp/pr-context/pr-meta.json)
 
         if [ "$IS_DRAFT" = "true" ]; then
           echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -115,13 +118,11 @@ runs:
       run: echo "$HOME/.claude/bin" >> "$GITHUB_PATH"
 
     - name: Install Claude Code
-      if: steps.skip.outputs.skip != 'true'
+      if: steps.skip.outputs.skip != 'true' && steps.cache-claude.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        if ! command -v claude &> /dev/null; then
-          curl -fsSL https://claude.ai/install.sh | bash
-          echo "$HOME/.claude/bin" >> "$GITHUB_PATH"
-        fi
+        curl -fsSL https://claude.ai/install.sh | bash
+        echo "$HOME/.claude/bin" >> "$GITHUB_PATH"
 
     - name: Setup Claude authentication
       if: steps.skip.outputs.skip != 'true'
@@ -134,6 +135,24 @@ runs:
           "theme": "dark"
         }
         AUTHEOF
+
+    # Pre-fetch PR diff + previous review comments in parallel so Claude
+    # can Read them directly instead of spending agent turns on gh calls.
+    - name: Pre-fetch PR context
+      if: steps.skip.outputs.skip != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PR_NUMBER: ${{ steps.pr.outputs.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        gh pr diff "$PR_NUMBER" > /tmp/pr-context/pr-diff.patch &
+        gh api "repos/$REPO/pulls/$PR_NUMBER/comments" \
+          --jq '[.[] | {id, path, line, body, created_at, user: .user.login, in_reply_to_id}]' \
+          > /tmp/pr-context/pr-comments.json &
+        wait
+        echo "Pre-fetched PR context:"
+        ls -la /tmp/pr-context/
 
     - name: Review PR
       id: review
@@ -160,6 +179,8 @@ runs:
         fi
 
         claude -p "Review PR #${PR_NUMBER} in repository ${REPO}. Use gh CLI for all GitHub operations. The GH_TOKEN is already configured for bot identity (github-actions[bot]).
+
+        Pre-fetched PR context is available in /tmp/pr-context/ (pr-meta.json, pr-diff.patch, pr-comments.json). Read these files in parallel BEFORE making any gh calls — they replace Step 2 and Step 2b fetches.
 
         ${REVIEW_PROMPT}
 

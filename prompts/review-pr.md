@@ -9,14 +9,27 @@ Create GitHub PR reviews with inline line-level comments and a structured summar
 - Do NOT put multi-line strings in Bash command arguments.
 - Use **Write** tool (not `cat`/`echo`) to create files.
 - **ALWAYS** use Write tool → `/tmp/review.json` → `gh api --input` for submitting reviews. NEVER use inline body text with `gh api --field` or `gh pr review --body`.
+- **Parallel tool calls**: when reading multiple independent files (CLAUDE.md + review-config.yml + README, or N source files traced from Step 5), issue ALL Read calls in a single message. Sequential reads waste turns.
+
+## Pre-fetched Context (use this first, skip redundant `gh` calls)
+
+The runner pre-fetches PR data into `/tmp/pr-context/` before invoking you:
+
+| File | Contents | Replaces |
+|------|----------|----------|
+| `pr-meta.json` | `files`, `commits`, `headRefOid`, `baseRefName`, `title`, `body`, `author`, `isDraft` | Step 2 `gh pr view --json ...` |
+| `pr-diff.patch` | Full unified diff | Step 2 `gh pr diff` |
+| `pr-comments.json` | Previous review comments (array of `{id, path, line, body, created_at, user, in_reply_to_id}`) | Step 2b `gh api .../pulls/N/comments` |
+
+**Always Read these three files in parallel as your first action.** Only fall back to `gh` calls if a file is missing/empty, or if you need data not in the pre-fetched set (e.g. per-file diffs for huge PRs).
 
 ## Step 0: Build Project Context
 
-Gather context in priority order:
+Gather context in priority order. **Issue all Reads in a single message (parallel)** — do not chain them sequentially:
 
 1. **Read `CLAUDE.md`** at repo root → extract architecture rules, naming conventions, constraints
 2. **Read `.claude/review-config.yml`** → extract ignore/include patterns, extra rules
-3. **If neither exists**, auto-discover:
+3. **If neither exists**, auto-discover (also parallel where possible):
    - Read `README.md` for project overview
    - Detect stack from config files (`mix.exs`, `package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `pubspec.yaml`, `Gemfile`, `pom.xml`/`build.gradle`)
    - Check linter configs (`.eslintrc*`, `.rubocop.yml`, `.golangci.yml`, `credo.exs`, `ruff.toml`)
@@ -32,6 +45,9 @@ Extract `owner/repo` and PR number from URL or use current directory git context
 
 ## Step 2: Fetch PR Data
 
+**Primary source:** Read `/tmp/pr-context/pr-meta.json` (metadata) and `/tmp/pr-context/pr-diff.patch` (diff). These are pre-fetched — no `gh` call needed.
+
+**Fallback only if pre-fetched files are missing:**
 ```bash
 gh pr view <NUMBER> --json files,commits,headRefOid,baseRefName,title,body [--repo owner/repo]
 gh pr diff <NUMBER> [--repo owner/repo]
@@ -39,11 +55,13 @@ gh pr diff <NUMBER> [--repo owner/repo]
 
 **PR body as context:** Read `What happened?` (author's intent) and `Insights` (non-obvious context) before analyzing code. Empty PR body = Minor issue.
 
-**Large diffs (>500 lines):** Use `gh pr diff <N> --name-only` first, then fetch per-file via `gh api repos/{owner}/{repo}/pulls/<N>/files`. Filter (Step 3) before fetching diffs.
+**Large diffs (>500 lines):** If `pr-diff.patch` is excessive, ignore it and fetch per-file via `gh api repos/{owner}/{repo}/pulls/<N>/files`. Filter (Step 3) before fetching diffs.
 
 ### Step 2b: Re-review Support
 
-Check for previous review comments:
+**Primary source:** Read `/tmp/pr-context/pr-comments.json` (pre-fetched array of previous review comments). If file is empty (`[]`), skip this step.
+
+**Fallback only:**
 ```bash
 gh api repos/{owner}/{repo}/pulls/<NUMBER>/comments --jq '[.[] | {id, path, line, body, created_at, user: .user.login, in_reply_to_id}]'
 ```
@@ -126,6 +144,8 @@ For each file passing Step 3 filter: read diff hunks, apply Step 5 findings, ide
 - Use `side: "LEFT"` only for deleted lines
 - For multi-line: use `start_line` + `start_side` + `line` + `side`
 - Diff header `@@ -oldStart,oldCount +newStart,newCount @@`: count from `newStart` for RIGHT, `oldStart` for LEFT
+
+**Parallel reads:** When opening multiple source files (callers from Step 5a, implementations from Step 5b, sibling files for convention check), issue all Read calls in a single message.
 
 **Large PRs (>10 files):** Batch into groups of 5-8, collect all comments before composing summary.
 
