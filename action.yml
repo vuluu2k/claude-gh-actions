@@ -102,27 +102,54 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
       run: gh pr checkout ${{ steps.pr.outputs.number }}
 
-    # Cache the Claude CLI binary across runs. Bump the cache key suffix
-    # (-v1 → -v2) inside this action when you want to force a fresh install.
+    # Detect the latest Claude CLI version so cache invalidates automatically
+    # when a new release ships. Falls back to a unique sentinel on network
+    # error, which forces a cache miss → fresh install (safe default).
+    - name: Detect latest Claude CLI version
+      if: steps.skip.outputs.skip != 'true'
+      id: claude-version
+      shell: bash
+      run: |
+        VERSION=$(curl -fsSL --max-time 10 https://downloads.claude.ai/claude-code-releases/latest) || VERSION="unknown-$(date +%s)"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "Resolved Claude CLI version: $VERSION"
+
+    # Cache the entire ~/.claude tree (launcher + version data + manifest).
+    # Key is bound to the resolved version above — new release = automatic
+    # cache miss = install runs. restore-keys lets us prime from any prior
+    # cache (useful as a baseline; install will overwrite with the new one).
     - name: Restore cached Claude CLI
       if: steps.skip.outputs.skip != 'true'
       id: cache-claude
       uses: actions/cache@v4
       with:
-        path: ~/.claude/bin
-        key: claude-cli-${{ runner.os }}-v1
+        path: ~/.claude
+        key: claude-cli-${{ runner.os }}-${{ steps.claude-version.outputs.version }}
+        restore-keys: |
+          claude-cli-${{ runner.os }}-
 
-    - name: Add cached Claude to PATH
-      if: steps.skip.outputs.skip != 'true' && steps.cache-claude.outputs.cache-hit == 'true'
+    - name: Add Claude to PATH
+      if: steps.skip.outputs.skip != 'true'
       shell: bash
       run: echo "$HOME/.claude/bin" >> "$GITHUB_PATH"
 
     - name: Install Claude Code
       if: steps.skip.outputs.skip != 'true' && steps.cache-claude.outputs.cache-hit != 'true'
       shell: bash
+      run: curl -fsSL https://claude.ai/install.sh | bash
+
+    - name: Verify Claude CLI works
+      if: steps.skip.outputs.skip != 'true'
+      shell: bash
       run: |
-        curl -fsSL https://claude.ai/install.sh | bash
-        echo "$HOME/.claude/bin" >> "$GITHUB_PATH"
+        if ! command -v claude > /dev/null 2>&1; then
+          echo "::error::claude binary not on PATH after install/cache restore"
+          exit 1
+        fi
+        claude --version || {
+          echo "::error::claude --version failed — cache may be corrupt; bump cache key or clear repo cache"
+          exit 1
+        }
 
     - name: Setup Claude authentication
       if: steps.skip.outputs.skip != 'true'
