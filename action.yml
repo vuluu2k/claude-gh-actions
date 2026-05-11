@@ -99,6 +99,21 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
       run: gh pr checkout ${{ steps.pr.outputs.number }}
 
+    # Cache the Claude CLI binary across runs. Bump the cache key suffix
+    # (-v1 → -v2) inside this action when you want to force a fresh install.
+    - name: Restore cached Claude CLI
+      if: steps.skip.outputs.skip != 'true'
+      id: cache-claude
+      uses: actions/cache@v4
+      with:
+        path: ~/.claude/bin
+        key: claude-cli-${{ runner.os }}-v1
+
+    - name: Add cached Claude to PATH
+      if: steps.skip.outputs.skip != 'true' && steps.cache-claude.outputs.cache-hit == 'true'
+      shell: bash
+      run: echo "$HOME/.claude/bin" >> "$GITHUB_PATH"
+
     - name: Install Claude Code
       if: steps.skip.outputs.skip != 'true'
       shell: bash
