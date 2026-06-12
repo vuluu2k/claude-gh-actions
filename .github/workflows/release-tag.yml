@@ -1,0 +1,65 @@
+name: Release Tag
+
+# Hai cách release:
+# 1. Chạy tay (workflow_dispatch): chọn bump patch/minor/major — tự tính version
+#    mới từ tag gần nhất, tạo tag vX.Y.Z và dời tag major (v1) theo.
+# 2. Push tag vX.Y.Z từ local: chỉ tự dời tag major (v1) tới commit đó.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Loại version bump"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+permissions:
+  contents: write
+
+jobs:
+  release-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release tag (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          latest=${latest:-v0.0.0}
+          IFS='.' read -r major minor patch <<< "${latest#v}"
+          case "${{ inputs.bump }}" in
+            major) version="v$((major + 1)).0.0" ;;
+            minor) version="v${major}.$((minor + 1)).0" ;;
+            patch) version="v${major}.${minor}.$((patch + 1))" ;;
+          esac
+          echo "Tagging $version (latest was $latest)"
+          git tag -a "$version" -m "Release $version"
+          git push origin "$version"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Use pushed tag (tag push)
+        if: github.event_name == 'push'
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+
+      - name: Move major tag
+        run: |
+          major_tag=${VERSION%%.*}
+          git tag -fa "$major_tag" -m "Update $major_tag -> $VERSION"
+          git push origin "$major_tag" --force

@@ -49,11 +49,12 @@ Reusable GitHub Action for automated PR code review using Claude Code CLI. Consu
 
 ## Versioning
 
-Consumers reference this action by tag: `@v1`, `@v1.0.0`. After pushing changes:
+Consumers reference this action by tag: `@v1`, `@v1.0.0`. Releases are automated by `.github/workflows/release-tag.yml`:
+
+- **Preferred:** run the "Release Tag" workflow manually (Actions → Release Tag → Run workflow), pick `patch`/`minor`/`major`. It computes the next version from the latest tag, creates `vX.Y.Z`, and moves the major tag (`v1`) automatically.
+- **Alternative:** push a `vX.Y.Z` tag from local — the workflow then moves the major tag for you:
 
 ```bash
 git tag -a v1.x.x -m "description"
 git push origin v1.x.x
-git tag -fa v1 -m "Update v1"
-git push origin v1 --force
 ```
