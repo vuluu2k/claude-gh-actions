@@ -120,6 +120,8 @@ gh pr view <N> --json files --jq '.files[] | select(.additions > 0) | .path'
 
 **You MUST investigate the surrounding codebase before forming opinions.** Shallow diff-only reading is the #1 cause of low-quality reviews. Every sub-step below is mandatory when applicable.
 
+**Adversarial mindset:** Assume every diff hides at least one bug — your job is to find it or prove it absent. Never judge code by appearance ("looks correct"). For each changed function, mentally execute it line by line with concrete values: one happy-path input, one boundary input (empty/zero/first/last), and one failure-path input (error return, nil, timeout). A bug you can trigger with a named input is a finding; "this looks fine" is not a verification.
+
 **5a: Trace callers** — For every function whose behavior changed, Grep all call sites. Check for: double execution, callers depending on old behavior, performance impact in hot paths.
 
 **5b: Read implementations** — When PR uses framework functions/utilities/library calls, read their source. Check: dedup/conflict behavior, error handling, side effects. **Never assume** — grep and read.
@@ -134,9 +136,19 @@ gh pr view <N> --json files --jq '.files[] | select(.additions > 0) | .path'
 
 **5g: Project-specific rules** — If CLAUDE.md exists, cross-check every changed file. If not, infer conventions from 2-3 similar existing files. Only flag clear inconsistencies, focus on universal issues.
 
+**5h: Logic & control flow** — For every changed conditional, loop, or guard, check: inverted/wrong operators (`&&` vs `||`, `<` vs `<=`, negation errors), off-by-one in indices/pagination/slicing, early returns that skip cleanup or release, switch/case fallthrough or missing default, branches that can never execute, and loop exit conditions that can never be met. Trace concrete values through each branch — including the branch the diff did NOT change but whose inputs changed.
+
+**5i: State & data consistency** — For multi-step writes (record + cache, DB + event, file + index): what if step 2 fails after step 1 succeeded? Is the operation idempotent when retried? Are invariants between related fields preserved (status ↔ timestamp, count ↔ collection, flag ↔ data presence)? Is stale cache/derived data invalidated when the source changes?
+
+**5j: Contract & compatibility drift** — When a signature, return shape, nullability, default value, enum, or serialized format changes: do ALL callers and consumers handle the new contract? Grep for the old name/key — renamed or removed fields silently produce nil/undefined downstream. Can in-flight old data (queued jobs, persisted rows, clients on the previous version) still flow through the new code?
+
+**5k: Concurrency & duplicate execution** — Check-then-act gaps (`exists?` → `create`), non-atomic read-modify-write on shared state, the same message/event processed twice under at-least-once delivery, and missing locks or uniqueness constraints where parallel execution is possible. Ask: what happens if two instances of this code run at the same time?
+
 ## Step 6: Analyze Changed Files
 
 For each file passing Step 3 filter: read diff hunks, apply Step 5 findings, identify issues per Step 4 focus + project rules + `extra_rules`.
+
+**Falsification pass (before declaring a file clean):** for each changed function, name the input or sequence of events you tried to break it with (per Step 5h–5k). Only mark a file clean after the boundary and failure paths survive mental execution — not after a single happy-path read.
 
 **Line number rules (CRITICAL):**
 - Only comment on lines within diff hunks — lines outside cause **422 Validation Failed**
@@ -159,6 +171,8 @@ Every comment MUST have:
 
 **Bad:** "This value might be nil, which could cause issues."
 **Good:** "`expire_in` comes from external API. If missing/nil, arithmetic on line N crashes. Values < buffer (86400) schedule in the past. Fix: `max((expire_in || 0) - 86400, 3600)`"
+
+**Reporting threshold for potential bugs:** If you can name a concrete input, value, or sequence of events that makes the code misbehave, report it — even without running it; state the trigger condition explicitly ("when the list is empty…", "if the request retries after step 1 committed…"). Conversely, vague unease without a concrete trigger is NOT a finding — investigate further (Step 5) or drop it. Never downgrade a reproducible logic bug to Nitpick because it "probably rarely happens": rarity affects priority, not severity.
 
 ## Step 8: Submit Review
 
@@ -259,3 +273,7 @@ If no issues: `LGTM! No issues found.` + files reviewed count + positive notes.
 | Vague comments without evidence | Reference traced code: callers, implementations, data flows |
 | Assuming utility behavior | Read actual implementation — never guess |
 | No concrete fix suggestion | Provide actual code |
+| Only checking the happy path | Mentally execute boundary + failure inputs (Step 5h) |
+| Judging code by appearance ("looks correct") | Trace concrete values through every changed branch |
+| Missing cross-file contract breaks | Grep old names/keys after signature or shape changes (Step 5j) |
+| Ignoring retry/parallel execution | Ask what happens when the code runs twice (Step 5i/5k) |
