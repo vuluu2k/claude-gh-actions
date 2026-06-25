@@ -4,6 +4,7 @@ name: Release Tag
 # 1. Chạy tay (workflow_dispatch): chọn bump patch/minor/major — tự tính version
 #    mới từ tag gần nhất, tạo tag vX.Y.Z và dời tag major (v1) theo.
 # 2. Push tag vX.Y.Z từ local: chỉ tự dời tag major (v1) tới commit đó.
+# Cả hai cách đều tự tạo GitHub Release (tab Releases) kèm changelog tự sinh.
 
 on:
   push:
@@ -63,3 +64,20 @@ jobs:
           major_tag=${VERSION%%.*}
           git tag -fa "$major_tag" -m "Update $major_tag -> $VERSION"
           git push origin "$major_tag" --force
+
+      # Tạo GitHub Release object trên UI (tab Releases) với changelog tự sinh.
+      # Không có step này thì chỉ có git tag, UI sẽ không hiện version mới.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists — refreshing notes."
+            gh release edit "$VERSION" --verify-tag --latest
+          else
+            gh release create "$VERSION" \
+              --title "$VERSION" \
+              --generate-notes \
+              --latest \
+              --verify-tag
+          fi
