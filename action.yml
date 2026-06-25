@@ -20,7 +20,7 @@ inputs:
   max_turns:
     description: "Maximum agentic turns for Claude"
     required: false
-    default: "50"
+    default: "80"
   model:
     description: "Claude model to use"
     required: false
