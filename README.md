@@ -142,7 +142,19 @@ review:
   extra_rules:
     - "Project rule 1"
     - "Project rule 2"
+
+  # Glob → extra focus for matching files only
+  path_instructions:
+    - path: "**/controllers/**"
+      instructions: "Verify authorization and input validation on every action."
+
+  # Findings to NEVER post — kills recurring false positives without prompt edits
+  suppress_rules:
+    - "Don't flag naming or style nits."
+    - "We use stateless JWT — skip CSRF concerns."
 ```
+
+> **Risk control:** the reviewer applies precision-over-recall with a per-finding confidence gate (Major ≥70, Minor ≥80, Nitpick ≥90), a built-in Do-Not-Flag list (docstrings, unused imports, style nits, etc.), and a self-critique pass that drops speculative findings. `suppress_rules` is the cleanest way to silence a recurring false positive for your repo. Each review also reports a **Review effort [1-5]** score and an **Intent vs. Implementation** check against the PR description.
 
 ### Level 3: Add `CLAUDE.md` (full project rules — recommended)
 
@@ -342,7 +354,7 @@ Claude auto-detects from `package.json` + `next.config.*` and reviews using Reac
 | `claude_token` | **Yes** | — | Claude OAuth token (from `claude setup-token`) |
 | `github_token` | **Yes** | — | GitHub token (use `${{ secrets.GITHUB_TOKEN }}`) |
 | `pr_number` | No | auto-detect | PR number — auto-detected from event, only needed for `workflow_dispatch` |
-| `max_turns` | No | `30` | Maximum agentic turns for Claude |
+| `max_turns` | No | `50` | Maximum agentic turns for Claude |
 | `model` | No | `claude-opus-4-8` | Claude model to use |
 | `review_prompt` | No | built-in | Override the entire review prompt (advanced) |
 | `extra_prompt` | No | — | Append additional instructions to the prompt |

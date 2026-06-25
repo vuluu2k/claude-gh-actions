@@ -2,6 +2,18 @@
 
 Create GitHub PR reviews with inline line-level comments and a structured summary. Reviews are **scope-based** — focus adapts based on commit types.
 
+## Review Philosophy (read first — governs every finding)
+
+**Precision over recall.** A false positive costs more reviewer trust than a missed minor issue. When unsure and impact is low, stay silent. Leading reviewers (Cursor BugBot, Graphite Diamond, Greptile) optimize *resolution rate* (did the author act on the comment?), not comment count — a clean, high-signal review of 3 real bugs beats 15 speculative nits. **Finding nothing report-worthy is an acceptable, even good, outcome.**
+
+**Confidence gating.** Every candidate finding carries an internal confidence 0–100 (how sure you are it's a real defect that reaches the buggy line):
+- **Major (bug/security/data-loss):** report at ≥70. Below 70, report ONLY if impact is severe (data loss, security, corruption) AND the comment explicitly states what remains uncertain.
+- **Minor:** report at ≥80.
+- **Nitpick:** report at ≥90, and only if it's not in the Do-Not-Flag list (Step 7).
+- Anything below its bar → drop silently. Rarity affects priority, not severity — never downgrade a reproducible bug to Nitpick.
+
+**Evidence or silence.** Any claim about code outside the diff (a caller, a utility's behavior, a missing handler) must be backed by an actual grep/read you performed. No receipt → downgrade to a question or drop it. Never guess at behavior you can verify.
+
 ## CI Rules (IMPORTANT — applies to ALL steps)
 
 - No shell redirects (`>`), pipes (`|`), chains (`&&`/`||`), or command substitution (`$(cmd)`).
@@ -28,7 +40,7 @@ The runner pre-fetches PR data into `/tmp/pr-context/` before invoking you:
 Gather context in priority order. **Issue all Reads in a single message (parallel)** — do not chain them sequentially:
 
 1. **Read `CLAUDE.md`** at repo root → extract architecture rules, naming conventions, constraints
-2. **Read `.claude/review-config.yml`** → extract ignore/include patterns, extra rules
+2. **Read `.claude/review-config.yml`** → extract ignore/include patterns, `extra_rules`, `path_instructions` (glob → focus rules), and `suppress_rules` (findings the team has declared off-limits — **honor these unconditionally**, they override everything below)
 3. **If neither exists**, auto-discover (also parallel where possible):
    - Read `README.md` for project overview
    - Detect stack from config files (`mix.exs`, `package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `pubspec.yaml`, `Gemfile`, `pom.xml`/`build.gradle`)
@@ -75,6 +87,10 @@ For each previous comment, classify based on replies and current code state:
 
 **Key principle:** When PR author provides a valid technical rebuttal, accept it. Review accuracy > consistency.
 
+**Incremental scoping (when previous comments exist):** Concentrate fresh deep-analysis on commits/hunks added *since the latest comment's `created_at`*. Only re-touch older code if a new change altered its inputs or contracts. This mirrors how CodeRabbit/BugBot do incremental reviews — don't re-review the whole PR from scratch each push.
+
+**Dedup (mandatory):** Before adding any inline comment, check it against `pr-comments.json`. Never re-post a finding already raised at the same `path`+`line` (even if unresolved — it's already visible). Surface still-open prior issues in the "Previous Review Follow-up" table instead, not as new inline comments.
+
 **No previous comments?** Skip this step.
 
 ## Step 3: Filter Files (Token Optimization)
@@ -98,6 +114,14 @@ review:
   ignore_patterns: ["custom/path/*"]      # Added to defaults
   include_patterns: ["generated/important.ts"]  # Force-include
   extra_rules: ["Custom review rule"]
+  # Glob → extra focus for matching files (e.g. authz checks on controllers)
+  path_instructions:
+    - path: "**/controllers/**"
+      instructions: "Verify authorization and input validation on every action."
+  # Findings the team has declared off-limits — NEVER post these (kills recurring false positives)
+  suppress_rules:
+    - "Don't flag naming/style nits."
+    - "We use stateless JWT — skip CSRF concerns."
 ```
 
 Filter implementation:
@@ -161,16 +185,48 @@ For each file passing Step 3 filter: read diff hunks, apply Step 5 findings, ide
 
 **Large PRs (>10 files):** Batch into groups of 5-8, collect all comments before composing summary.
 
+## Step 6.5: Self-Critique Pass (generate → filter — do NOT skip)
+
+You now have a list of *candidate* findings. Re-read them with a fresh, skeptical eye, as if a second reviewer were auditing your work for false positives. This separate filtering pass is the single highest-impact noise control used by every leading tool (BugBot's validator model, Greptile's self-challenge, CodeRabbit's verification lane, Anthropic's per-finding filter). For **each** candidate:
+
+1. **Trace the trigger.** Confirm the concrete input/sequence you claim actually reaches the buggy line — re-grep the call path if needed. If you cannot trace a real path to the defect, **drop it**.
+2. **Check the receipt.** Every cross-file claim (caller behavior, utility semantics, missing handler) must cite a grep/read you actually did. No receipt → downgrade to a question or drop.
+3. **Score confidence 0–100** and apply the Review Philosophy gate (Major ≥70, Minor ≥80, Nitpick ≥90). Below the bar → drop, unless severe-impact escape clause applies.
+4. **Apply `suppress_rules`** from review-config.yml and the Do-Not-Flag list (Step 7). Matching candidate → drop.
+5. **Dedup** against already-posted comments (Step 2b).
+
+Dropping most or all candidates here is normal and correct. Keep only findings you would defend out loud with a named reproduction.
+
 ## Step 7: Compose Review Comments
 
 Every comment MUST have:
 1. **Severity badge** (separate line)
 2. **Specific description** — what goes wrong, under what conditions
-3. **Evidence** — reference traced callers, implementations, or data flows from Step 5
-4. **Concrete fix** — actual code, not "consider handling this"
+3. **Trigger** — an explicit clause naming the input/state/sequence that makes it fail ("Trigger: when `items` is empty…", "Trigger: if the request retries after step 1 committed…"). If you cannot write a concrete trigger, you do not have a finding — drop it.
+4. **Evidence** — reference traced callers, implementations, or data flows from Step 5
+5. **Concrete fix** — actual code, not "consider handling this"
 
 **Bad:** "This value might be nil, which could cause issues."
-**Good:** "`expire_in` comes from external API. If missing/nil, arithmetic on line N crashes. Values < buffer (86400) schedule in the past. Fix: `max((expire_in || 0) - 86400, 3600)`"
+**Good:** "`expire_in` comes from external API. Trigger: API omits the field → `expire_in` is nil → arithmetic on line N crashes; values < buffer (86400) schedule in the past. Fix: `max((expire_in || 0) - 86400, 3600)`"
+
+### Do-Not-Flag list (suppress these — they are noise, not signal)
+
+Never post a comment whose sole content is one of these (learned from PR-Agent, Anthropic security-review, BugBot, Copilot):
+- Missing docstrings, comments, or type hints/annotations.
+- Unused imports/variables (the linter owns these).
+- "Use a more specific exception type" / over-broad catch, with no concrete failure.
+- Package/dependency version choices, or "this dependency is outdated."
+- Pure style/naming/formatting unless a project rule mandates it OR it causes an actual defect.
+- Theoretical races/edge cases with no concrete trigger you can name.
+- Missing rate-limiting / DOS / resource-exhaustion hardening, unless the path is security-critical.
+- Code elements that may be defined elsewhere in the codebase (grep first — don't flag "undefined" without checking).
+- Test/fixture/doc-only nitpicks when the production change itself is clean.
+
+A finding that is genuinely Major (a real bug/security hole) is never suppressed by this list — these only kill low-value noise.
+
+### Finding budget
+
+Rank surviving findings by **severity × confidence**. Post the top ~10–15. If more remain, post the highest and roll the rest into a single summary line ("N additional minor/nitpick items omitted for signal"). A wall of 30 comments trains the team to ignore the bot.
 
 **Reporting threshold for potential bugs:** If you can name a concrete input, value, or sequence of events that makes the code misbehave, report it — even without running it; state the trigger condition explicitly ("when the list is empty…", "if the request retries after step 1 committed…"). Conversely, vague unease without a concrete trigger is NOT a finding — investigate further (Step 5) or drop it. Never downgrade a reproducible logic bug to Nitpick because it "probably rarely happens": rarity affects priority, not severity.
 
@@ -232,6 +288,15 @@ const value = data?.result ?? defaultValue;
 
 **Type**: fix | feat | refactor | ...
 **Files reviewed**: N | **Issues found**: N major, N minor, N nitpick
+**Review effort**: [1-5] — 1 = small & trivial, 5 = large/complex/high-risk (triage signal for the human reviewer)
+
+### Intent vs. Implementation
+> Only when the PR body states intent (`What happened?`). Restate the claimed changes in your own words, then bucket each:
+
+- ✅ Implemented: <claim that the diff actually delivers>
+- ❌ Not implemented / diverged: <claim the code does not fulfill>
+- ⚠️ Needs human verification: <claim you can't confirm from the diff>
+- 🔎 Scope creep: <code doing things the description never mentions>
 
 ### Findings
 1. ![Major](https://img.shields.io/badge/Major-red) Brief description (`path/file:42`)
@@ -277,3 +342,8 @@ If no issues: `LGTM! No issues found.` + files reviewed count + positive notes.
 | Judging code by appearance ("looks correct") | Trace concrete values through every changed branch |
 | Missing cross-file contract breaks | Grep old names/keys after signature or shape changes (Step 5j) |
 | Ignoring retry/parallel execution | Ask what happens when the code runs twice (Step 5i/5k) |
+| Posting low-confidence speculation | Apply the confidence gate (Major ≥70 / Minor ≥80 / Nitpick ≥90); drop the rest (Step 6.5) |
+| Flagging noise (docstrings, naming, unused imports) | Check the Do-Not-Flag list (Step 7) before posting |
+| Re-posting a comment from a prior review | Dedup against `pr-comments.json`; use the follow-up table (Step 2b) |
+| Skipping the self-critique pass | Always re-audit candidates for false positives before submitting (Step 6.5) |
+| Burying real bugs under 30 nitpicks | Rank by severity × confidence, cap at ~10-15, summarize the rest (Step 7) |
