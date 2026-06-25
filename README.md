@@ -154,7 +154,7 @@ review:
     - "We use stateless JWT — skip CSRF concerns."
 ```
 
-> **Risk control:** the reviewer applies precision-over-recall with a per-finding confidence gate (Major ≥70, Minor ≥80, Nitpick ≥90), a built-in Do-Not-Flag list (docstrings, unused imports, style nits, etc.), and a self-critique pass that drops speculative findings. `suppress_rules` is the cleanest way to silence a recurring false positive for your repo. Each review also reports a **Review effort [1-5]** score and an **Intent vs. Implementation** check against the PR description.
+> **Risk control:** the reviewer applies precision-over-recall with a per-finding confidence gate (Major ≥70, Minor ≥80, Nitpick ≥90), a built-in Do-Not-Flag list (docstrings, unused imports, style nits, etc.), and a self-critique pass that drops speculative findings. `suppress_rules` is the cleanest way to silence a recurring false positive for your repo. Each review also reports a **Review effort [1-5]** score, an **Intent vs. Implementation** check against the PR description, and a collapsible **Walkthrough** (per-file changes table + a Mermaid sequence diagram for complex PRs — effort ≥3 or multi-module control flow).
 
 ### Level 3: Add `CLAUDE.md` (full project rules — recommended)
 

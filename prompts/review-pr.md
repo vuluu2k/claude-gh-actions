@@ -290,6 +290,31 @@ const value = data?.result ?? defaultValue;
 **Files reviewed**: N | **Issues found**: N major, N minor, N nitpick
 **Review effort**: [1-5] — 1 = small & trivial, 5 = large/complex/high-risk (triage signal for the human reviewer)
 
+### Walkthrough
+
+Wrap this whole section in `<details><summary>Walkthrough</summary>` … `</details>` so it stays collapsed and never buries the Findings.
+
+**Changes table (always include):** one row per changed file (or per logical group for large PRs), summarizing *what* changed — not a diff restatement.
+
+| File(s) | Change summary |
+|---------|----------------|
+| `path/to/file` | One-line description of the substantive change |
+
+**Sequence/flow diagram (ONLY when Review effort ≥ 3 OR the PR adds non-trivial control flow that spans ≥2 modules/services/layers):** emit a Mermaid block. Skip it entirely for small/simple PRs — a diagram of a one-file change is noise. Keep it to the changed control flow only; do not diagram unchanged paths. Render as a fenced ` ```mermaid ` block (GitHub renders it natively):
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant NewFn
+    participant DB
+    Caller->>NewFn: request(payload)
+    NewFn->>DB: write(record)
+    DB-->>NewFn: ok
+    NewFn-->>Caller: result
+```
+
+Only include arrows/participants that the diff actually touches. If a Mermaid diagram would be guessy or you can't ground every node in code you read, omit it — a missing diagram beats a wrong one. Build the review JSON with the **Write** tool (it escapes the newlines/backticks safely); never assemble the body via shell.
+
 ### Intent vs. Implementation
 > Only when the PR body states intent (`What happened?`). Restate the claimed changes in your own words, then bucket each:
 
