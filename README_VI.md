@@ -344,8 +344,8 @@ Claude tự detect từ `package.json` + `next.config.*` và review theo React/N
 | `claude_token` | **Yes** | — | Claude OAuth token (từ `claude setup-token`) |
 | `github_token` | **Yes** | — | GitHub token (dùng `${{ secrets.GITHUB_TOKEN }}`) |
 | `pr_number` | No | auto-detect | Số PR — tự detect từ event, chỉ cần khi `workflow_dispatch` |
-| `max_turns` | No | `80` | Số lượt tối đa Claude được thao tác |
-| `model` | No | `claude-opus-4-8` | Model Claude sử dụng |
+| `max_turns` | No | `40` | Số lượt tối đa Claude được thao tác |
+| `model` | No | `claude-opus-5` | Model Claude sử dụng |
 | `review_prompt` | No | built-in | Override toàn bộ review prompt (advanced) |
 | `extra_prompt` | No | — | Thêm instructions vào cuối prompt |
 
@@ -356,7 +356,7 @@ Claude tự detect từ `package.json` + `next.config.*` và review theo React/N
   with:
     claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     github_token: ${{ secrets.GITHUB_TOKEN }}
-    model: "claude-opus-4-8"        # Dùng Opus cho review sâu hơn (tốn hơn)
+    model: "claude-sonnet-5"        # Dùng Sonnet cho review nhanh và rẻ hơn
 ```
 
 ### Giới hạn turns
