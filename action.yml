@@ -33,6 +33,26 @@ inputs:
     description: "Additional review instructions appended to the prompt (per-repo rules)"
     required: false
     default: ""
+  skip_merged:
+    description: "Skip the review when the PR is already merged or closed"
+    required: false
+    default: "true"
+  dedup_similar_prs:
+    description: "Skip a PR whose content was already reviewed in a twin PR (same hotfix opened against master and develop)"
+    required: false
+    default: "true"
+  incremental_review:
+    description: "On re-runs, review only the commits pushed since the previous review"
+    required: false
+    default: "true"
+  max_incremental_bytes:
+    description: "Fall back to a full review when the incremental patch exceeds this size"
+    required: false
+    default: "300000"
+  force:
+    description: "Bypass every guard and review the whole PR again"
+    required: false
+    default: "false"
 
 outputs:
   total_cost_usd:
@@ -44,6 +64,15 @@ outputs:
   session_id:
     description: "Claude session ID (for resuming)"
     value: ${{ steps.review.outputs.session }}
+  skipped:
+    description: "true when the guard skipped the review"
+    value: ${{ steps.guard.outputs.skip }}
+  skip_reason:
+    description: "Why the review was skipped (empty when it ran)"
+    value: ${{ steps.guard.outputs.skip_reason }}
+  review_mode:
+    description: "full or incremental"
+    value: ${{ steps.guard.outputs.mode }}
 
 runs:
   using: "composite"
@@ -72,45 +101,54 @@ runs:
           exit 1
         fi
 
-    - name: Skip bot and draft PRs
-      id: skip
+    # Guard: merged/draft/bot PR, duplicate twin PR (hotfix opened against both
+    # master and develop), and incremental scoping. See scripts/review-guard.sh.
+    - name: Review guard
+      id: guard
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ steps.pr.outputs.number }}
+        SKIP_MERGED: ${{ inputs.skip_merged }}
+        DEDUP_SIMILAR_PRS: ${{ inputs.dedup_similar_prs }}
+        INCREMENTAL_REVIEW: ${{ inputs.incremental_review }}
+        MAX_INCREMENTAL_BYTES: ${{ inputs.max_incremental_bytes }}
+        FORCE: ${{ inputs.force }}
+        COMMENT_BODY: ${{ github.event.comment.body }}
+      run: |
+        # `/review full` (or `/review force`) in a PR comment bypasses every guard.
+        if [ "${{ github.event_name }}" = "issue_comment" ] \
+           && printf '%s' "$COMMENT_BODY" | grep -qiE '/review[[:space:]]+(full|force)'; then
+          export FORCE=true
+        fi
+        bash "${{ github.action_path }}/scripts/review-guard.sh"
+
+    - name: Report skip reason on comment trigger
+      if: steps.guard.outputs.skip == 'true' && github.event_name == 'issue_comment'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
       run: |
-        mkdir -p /tmp/pr-context
-        gh pr view ${{ steps.pr.outputs.number }} \
-          --json author,isDraft,files,commits,headRefOid,baseRefName,title,body \
-          > /tmp/pr-context/pr-meta.json
-        IS_DRAFT=$(jq -r '.isDraft' /tmp/pr-context/pr-meta.json)
-        AUTHOR=$(jq -r '.author.login' /tmp/pr-context/pr-meta.json)
-
-        if [ "$IS_DRAFT" = "true" ]; then
-          echo "skip=true" >> "$GITHUB_OUTPUT"
-          echo "::notice::Skipping review for draft PR"
-        elif [[ "$AUTHOR" == *"bot"* ]] || [[ "$AUTHOR" == *"dependabot"* ]]; then
-          echo "skip=true" >> "$GITHUB_OUTPUT"
-          echo "::notice::Skipping review for bot PR"
-        else
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-        fi
+        gh api -X POST "repos/${{ github.repository }}/issues/${{ steps.pr.outputs.number }}/comments" --silent \
+          -f body="🤖 Review skipped: ${{ steps.guard.outputs.skip_reason }}. Comment \`/review full\` to force a full re-review."
 
     - name: Checkout PR branch (for comment triggers)
-      if: github.event_name == 'issue_comment' && steps.skip.outputs.skip != 'true'
+      if: github.event_name == 'issue_comment' && steps.guard.outputs.skip != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
       run: gh pr checkout ${{ steps.pr.outputs.number }}
 
     - name: Install Claude Code
-      if: steps.skip.outputs.skip != 'true'
+      if: steps.guard.outputs.skip != 'true'
       shell: bash
       run: |
         curl -fsSL https://claude.ai/install.sh | bash
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
     - name: Setup Claude authentication
-      if: steps.skip.outputs.skip != 'true'
+      if: steps.guard.outputs.skip != 'true'
       shell: bash
       run: |
         mkdir -p ~/.claude
@@ -124,24 +162,34 @@ runs:
     # Pre-fetch PR diff + previous review comments in parallel so Claude
     # can Read them directly instead of spending agent turns on gh calls.
     - name: Pre-fetch PR context
-      if: steps.skip.outputs.skip != 'true'
+      if: steps.guard.outputs.skip != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
         PR_NUMBER: ${{ steps.pr.outputs.number }}
         REPO: ${{ github.repository }}
+        MODE: ${{ steps.guard.outputs.mode }}
       run: |
-        gh pr diff "$PR_NUMBER" > /tmp/pr-context/pr-diff.patch &
+        # pr-meta.json was already written by the guard step.
+        if [ "$MODE" = "incremental" ]; then
+          # Replace the full diff with a pointer: the reviewed scope is incremental.patch.
+          # A stub (rather than a missing file) stops the prompt's "fetch it yourself" fallback.
+          printf '%s\n' "Full PR diff intentionally omitted — INCREMENTAL REVIEW MODE." \
+            "Review scope is /tmp/pr-context/incremental.patch. Do not fetch the full diff." \
+            > /tmp/pr-context/pr-diff.patch
+        else
+          gh pr diff "$PR_NUMBER" > /tmp/pr-context/pr-diff.patch &
+        fi
         gh api "repos/$REPO/pulls/$PR_NUMBER/comments" \
           --jq '[.[] | {id, path, line, body, created_at, user: .user.login, in_reply_to_id}]' \
           > /tmp/pr-context/pr-comments.json &
         wait
-        echo "Pre-fetched PR context:"
+        echo "Pre-fetched PR context (mode=${MODE}):"
         ls -la /tmp/pr-context/
 
     - name: Review PR
       id: review
-      if: steps.skip.outputs.skip != 'true'
+      if: steps.guard.outputs.skip != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
@@ -149,6 +197,7 @@ runs:
         PR_NUMBER: ${{ steps.pr.outputs.number }}
         REPO: ${{ github.repository }}
         EXTRA_PROMPT: ${{ inputs.extra_prompt }}
+        INCREMENTAL_PROMPT: ${{ steps.guard.outputs.incremental_prompt }}
       run: |
         # Load review prompt: custom input > built-in default
         CUSTOM_PROMPT="${{ inputs.review_prompt }}"
@@ -169,7 +218,9 @@ runs:
 
         ${REVIEW_PROMPT}
 
-        ${EXTRA_PROMPT}" \
+        ${EXTRA_PROMPT}
+
+        ${INCREMENTAL_PROMPT}" \
           --model ${{ inputs.model }} \
           --allowedTools "Bash(gh *)" \
           --allowedTools "Bash(jq *)" \
@@ -188,8 +239,31 @@ runs:
         echo "turns=$(jq -r '.num_turns // "0"' /tmp/claude-review-output.json)" >> "$GITHUB_OUTPUT"
         echo "session=$(jq -r '.session_id // ""' /tmp/claude-review-output.json)" >> "$GITHUB_OUTPUT"
 
+    # Record how far this PR has been reviewed. The next run diffs from here, and a
+    # twin PR (same hotfix against another base branch) reads it to skip a duplicate.
+    - name: Record review state
+      if: success() && steps.guard.outputs.skip != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        REPO: ${{ github.repository }}
+        MODE: ${{ steps.guard.outputs.mode }}
+        SINCE: ${{ steps.guard.outputs.since_sha }}
+        NEW_COMMITS: ${{ steps.guard.outputs.new_commits }}
+      run: |
+        if [ "$MODE" = "incremental" ]; then
+          NOTE="Mode: \`incremental\` (${NEW_COMMITS} new commit(s) since \`${SINCE:0:7}\`)."
+        else
+          NOTE="Mode: \`full\`."
+        fi
+        bash "${{ github.action_path }}/scripts/review-mark.sh" \
+          "${{ steps.pr.outputs.number }}" \
+          "${{ steps.guard.outputs.head_sha }}" \
+          "${{ steps.guard.outputs.diff_fp }}" \
+          "$NOTE"
+
     - name: Log token usage
-      if: always() && steps.skip.outputs.skip != 'true'
+      if: always() && steps.guard.outputs.skip != 'true'
       shell: bash
       run: |
         if [ -f /tmp/claude-review-output.json ]; then

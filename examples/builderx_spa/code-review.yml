@@ -2,7 +2,8 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    # `closed` is required so a merged PR cancels its in-flight review.
+    types: [opened, reopened, synchronize, closed]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -10,16 +11,35 @@ on:
       pr_number:
         description: "PR number to review"
         required: true
+      force:
+        description: "Bypass guards and review the whole PR again"
+        required: false
+        default: "false"
+
+# One live review per PR:
+# - new push       -> cancels the review of the now-stale commit
+# - merged/closed  -> the cancel-on-close job below cancels the running review
+# The "-noop-<run_id>" suffix keeps ordinary PR comments (which also start a run)
+# out of the shared group, so they cannot cancel a running review.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}${{ github.event_name == 'issue_comment' && !contains(github.event.comment.body, '/review') && format('-noop-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
 
 jobs:
-  review:
+  cancel-on-close:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
     runs-on: ubuntu-latest
+    steps:
+      - run: echo "PR #${{ github.event.pull_request.number }} closed — cancelling any running review."
+
+  review:
     if: |
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        contains(github.event.comment.body, '/review'))
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -28,6 +48,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # Required: incremental review diffs against the previously reviewed commit.
           fetch-depth: 0
 
       - name: Claude Code Review
@@ -35,3 +56,5 @@ jobs:
         with:
           claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          pr_number: ${{ inputs.pr_number }}
+          force: ${{ inputs.force }}

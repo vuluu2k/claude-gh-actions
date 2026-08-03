@@ -48,9 +48,10 @@ Tạo file `.github/workflows/code-review.yml` trong repo của bạn:
 name: Claude Code Review
 
 on:
-  # Auto review khi PR mở hoặc có commit mới
+  # Auto review khi PR mở hoặc có commit mới.
+  # `closed` bắt buộc phải có để PR merge xong thì huỷ review đang chạy.
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, closed]
 
   # Review khi comment "/review" trong PR
   issue_comment:
@@ -62,14 +63,33 @@ on:
       pr_number:
         description: "PR number to review"
         required: true
+      force:
+        description: "Bỏ qua guard, review lại toàn bộ PR"
+        required: false
+        default: "false"
+
+# Mỗi PR chỉ giữ 1 review đang chạy:
+# - push commit mới -> huỷ review của commit cũ
+# - merge/đóng PR   -> job cancel-on-close huỷ review đang chạy
+# Hậu tố "-noop-<run_id>": comment thường cũng tạo workflow run, nếu dùng chung
+# group nó sẽ huỷ nhầm review đang chạy -> tách sang group riêng.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}${{ github.event_name == 'issue_comment' && !contains(github.event.comment.body, '/review') && format('-noop-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
 
 jobs:
+  cancel-on-close:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "PR đã đóng — huỷ review đang chạy."
+
   review:
     runs-on: ubuntu-latest
 
-    # Chỉ chạy khi: PR event, manual trigger, hoặc comment "/review"
+    # Chỉ chạy khi: PR event (trừ close), manual trigger, hoặc comment "/review"
     if: |
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
@@ -84,6 +104,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # Bắt buộc: incremental review cần diff với commit đã review lần trước
           fetch-depth: 0
 
       - name: Claude Code Review
@@ -91,6 +112,8 @@ jobs:
         with:
           claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          pr_number: ${{ inputs.pr_number }}
+          force: ${{ inputs.force }}
 ```
 
 **Done.** Mở PR là Claude tự review.
@@ -348,6 +371,11 @@ Claude tự detect từ `package.json` + `next.config.*` và review theo React/N
 | `model` | No | `claude-opus-5` | Model Claude sử dụng |
 | `review_prompt` | No | built-in | Override toàn bộ review prompt (advanced) |
 | `extra_prompt` | No | — | Thêm instructions vào cuối prompt |
+| `skip_merged` | No | `true` | Bỏ qua review khi PR đã merge/đóng |
+| `dedup_similar_prs` | No | `true` | Bỏ qua PR có nội dung đã được review ở PR song song |
+| `incremental_review` | No | `true` | Lần review sau chỉ review commit mới kể từ lần trước |
+| `max_incremental_bytes` | No | `300000` | Patch incremental lớn hơn mức này thì quay về review full |
+| `force` | No | `false` | Bỏ qua mọi guard, review lại toàn bộ PR |
 
 ### Đổi model
 
@@ -439,13 +467,38 @@ jobs:
 
 ---
 
-## Auto-skip
+## Tiết kiệm token (auto-skip & incremental)
 
-Action tự động bỏ qua khi:
-- PR là **draft**
-- PR author là **bot** (dependabot, renovate, etc.)
+Action chặn trước khi tốn token. Không cần cấu hình gì — mỗi guard đều có input
+riêng nếu muốn tắt (xem Inputs reference).
 
-Không cần cấu hình gì.
+| Tình huống | Hành vi | Lý do |
+|-----------|---------|-------|
+| PR là **draft** | bỏ qua | chưa ai review |
+| PR author là **bot** (dependabot, renovate…) | bỏ qua | code sinh tự động |
+| PR đã **merge / đóng** | bỏ qua | review xong cũng không ai đọc |
+| **PR song song** — cùng hotfix mở vào cả `master` và `develop` | chỉ review 1 lần, PR còn lại được comment trỏ sang | nội dung giống hệt |
+| **Push commit mới** vào PR đã review | chỉ review commit mới | không đọc lại code đã review |
+| Push nhưng **không có commit mới** (rebase-noop) | bỏ qua | không có gì thay đổi |
+
+**Nhận diện PR song song** theo 2 cách: cùng head branch + cùng head commit; hoặc —
+với hotfix cherry-pick sang branch anh em (`4587-master` / `4587-from-develop`) — cùng
+*vân tay nội dung diff* (bỏ hunk header và blob hash, nên cùng thay đổi trên base khác
+vẫn khớp).
+
+**Incremental review** dựa trên 1 comment marker action tự giữ trên PR:
+
+```
+<!-- claude-review-state sha=<commit đã review> fp=<vân tay diff> -->
+```
+
+Lần chạy sau diff `sha..HEAD`, chỉ đưa Claude các commit mới cộng với comment của lần
+review trước, và yêu cầu xác nhận góp ý cũ đã fix chưa thay vì báo lại từ đầu. Cần
+`fetch-depth: 0` ở bước checkout. Tự động quay về review full khi force-push/rebase hoặc
+khi patch vượt `max_incremental_bytes`.
+
+**Ép review lại toàn bộ:** comment `/review full` (hoặc `/review force`) trong PR, hoặc
+chạy workflow thủ công với `force: true`.
 
 ---
 

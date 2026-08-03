@@ -32,8 +32,9 @@ The runner pre-fetches PR data into `/tmp/pr-context/` before invoking you:
 | `pr-meta.json` | `files`, `commits`, `headRefOid`, `baseRefName`, `title`, `body`, `author`, `isDraft` | Step 2 `gh pr view --json ...` |
 | `pr-diff.patch` | Full unified diff | Step 2 `gh pr diff` |
 | `pr-comments.json` | Previous review comments (array of `{id, path, line, body, created_at, user, in_reply_to_id}`) | Step 2b `gh api .../pulls/N/comments` |
+| `incremental.patch` | **Only present in INCREMENTAL REVIEW MODE** — the commits pushed since the previous review | `pr-diff.patch` (which is then a stub) |
 
-**Always Read these three files in parallel as your first action.** Only fall back to `gh` calls if a file is missing/empty, or if you need data not in the pre-fetched set (e.g. per-file diffs for huge PRs).
+**Always Read these three files in parallel as your first action.** If `incremental.patch` exists, an INCREMENTAL REVIEW MODE block is appended to this prompt — it overrides the scope rules below. Only fall back to `gh` calls if a file is missing/empty, or if you need data not in the pre-fetched set (e.g. per-file diffs for huge PRs).
 
 ## Step 0: Build Project Context
 

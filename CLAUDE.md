@@ -8,7 +8,9 @@ Reusable GitHub Action for automated PR code review using Claude Code CLI. Consu
 
 ## Repository Structure
 
-- `action.yml` — GitHub Actions composite action definition. Orchestrates: detect PR number → skip bot/draft → install Claude CLI → load prompt → run `claude -p` → log token usage.
+- `action.yml` — GitHub Actions composite action definition. Orchestrates: detect PR number → **review guard** → install Claude CLI → load prompt → run `claude -p` → record review state → log token usage.
+- `scripts/review-guard.sh` — token-saving guard, runs before anything is installed. Decides skip vs full vs incremental (see "Review Guard" below).
+- `scripts/review-mark.sh` — upserts the single `<!-- claude-review-state sha=… fp=… -->` comment per PR that the guard reads on the next run.
 - `prompts/review-pr.md` — The core review prompt (~500 lines). Loaded by `action.yml` at runtime via `${{ github.action_path }}/prompts/review-pr.md`. Defines the 8-step review process, severity system, comment format, and submission flow.
 - `examples/` — Per-stack example configs (workflow files + `.claude/review-config.yml`) for builderx_api (Elixir), builderx_spa (Vue), Go, Python.
 - `README.md` — User-facing setup guide in Vietnamese. Contains all usage examples and input/output docs.
@@ -21,6 +23,28 @@ Reusable GitHub Action for automated PR code review using Claude Code CLI. Consu
 4. Runs `claude -p "<prompt>"` with restricted `--allowedTools` (only `gh`, `jq`, `cat`, `rm /tmp/*`, Read, Grep, Glob, Edit for `/tmp/**`)
 5. Claude reads the consumer repo's `CLAUDE.md` and `.claude/review-config.yml` to get project-specific rules
 6. Claude submits review via `gh api` using Write tool → `/tmp/review.json` → `gh api --input`
+
+## Review Guard (token control)
+
+`scripts/review-guard.sh` runs before the Claude CLI is even installed and emits
+`skip` / `mode` / `since_sha` / `diff_fp` / `incremental_prompt`:
+
+1. **Skip** — draft, bot author, or merged/closed PR (`skip_merged`).
+2. **Duplicate twin PR** (`dedup_similar_prs`) — the same hotfix is routinely opened twice,
+   once against `master` and once against `develop`. Detected either by same head branch +
+   same head commit, or by identical diff-content fingerprint (cherry-picked onto a sibling
+   branch). Second PR gets a comment linking to the reviewed one, no review runs.
+3. **Incremental** (`incremental_review`) — diff `since_sha..HEAD`, write
+   `/tmp/pr-context/incremental.patch`, replace `pr-diff.patch` with a stub, and append an
+   INCREMENTAL REVIEW MODE block to the prompt. Falls back to full review on force-push
+   (mark no longer an ancestor), missing objects (consumer forgot `fetch-depth: 0`), or a
+   patch larger than `max_incremental_bytes`.
+
+State lives in one marker comment per PR — no cache, no extra refs — so twin PRs can read
+each other's state. `force: true` or a `/review full` comment bypasses all of it.
+
+When changing the guard, keep every skip path emitting `skip=true` **and** `skip_reason`:
+`action.yml` reports the reason back to the PR on comment triggers.
 
 ## Key Design Decisions
 
@@ -38,7 +62,7 @@ Reusable GitHub Action for automated PR code review using Claude Code CLI. Consu
 - Step 5g handles both "has CLAUDE.md" and "no CLAUDE.md" cases — both paths must be maintained
 
 ### When editing `action.yml`
-- All steps after "Skip bot and draft PRs" must have `if: steps.skip.outputs.skip != 'true'`
+- All steps after "Review guard" must have `if: steps.guard.outputs.skip != 'true'`
 - The `--allowedTools` list is a security boundary — Claude in CI should not have Write access to repo files, only `/tmp/**`
 - The `review_prompt` input allows consumers to fully override the built-in prompt
 
