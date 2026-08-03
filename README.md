@@ -48,9 +48,10 @@ Create `.github/workflows/code-review.yml` in your repo:
 name: Claude Code Review
 
 on:
-  # Auto review when PR is opened or new commits are pushed
+  # Auto review when PR is opened or new commits are pushed.
+  # `closed` is required so merging a PR cancels its in-flight review.
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, closed]
 
   # Review when someone comments "/review" in the PR
   issue_comment:
@@ -62,14 +63,33 @@ on:
       pr_number:
         description: "PR number to review"
         required: true
+      force:
+        description: "Bypass guards and review the whole PR again"
+        required: false
+        default: "false"
+
+# One live review per PR:
+# - new push       -> cancels the review of the now-stale commit
+# - merged/closed  -> the cancel-on-close job cancels the running review
+# The "-noop-<run_id>" suffix keeps ordinary PR comments (which also start a run)
+# out of the shared group, so they cannot cancel a running review.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}${{ github.event_name == 'issue_comment' && !contains(github.event.comment.body, '/review') && format('-noop-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
 
 jobs:
+  cancel-on-close:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "PR closed — cancelling any running review."
+
   review:
     runs-on: ubuntu-latest
 
-    # Run on: PR events, manual trigger, or "/review" comment
+    # Run on: PR events (except close), manual trigger, or "/review" comment
     if: |
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
@@ -84,6 +104,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # Required: incremental review diffs against the previously reviewed commit
           fetch-depth: 0
 
       - name: Claude Code Review
@@ -91,6 +112,8 @@ jobs:
         with:
           claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          pr_number: ${{ inputs.pr_number }}
+          force: ${{ inputs.force }}
 ```
 
 **Done.** Open a PR and Claude will review it automatically.
@@ -358,6 +381,11 @@ Claude auto-detects from `package.json` + `next.config.*` and reviews using Reac
 | `model` | No | `claude-opus-5` | Claude model to use |
 | `review_prompt` | No | built-in | Override the entire review prompt (advanced) |
 | `extra_prompt` | No | — | Append additional instructions to the prompt |
+| `skip_merged` | No | `true` | Skip the review when the PR is already merged/closed |
+| `dedup_similar_prs` | No | `true` | Skip a PR whose content was already reviewed in a twin PR |
+| `incremental_review` | No | `true` | Re-runs review only the commits pushed since the last review |
+| `max_incremental_bytes` | No | `300000` | Fall back to a full review when the incremental patch is larger |
+| `force` | No | `false` | Bypass every guard and review the whole PR again |
 
 ### Change model
 
@@ -449,13 +477,39 @@ jobs:
 
 ---
 
-## Auto-Skip
+## Token Savings (Auto-Skip & Incremental)
 
-The action automatically skips review when:
-- PR is a **draft**
-- PR author is a **bot** (dependabot, renovate, etc.)
+The action guards every run before spending a single token. No configuration needed —
+each guard has an input if you want it off (see Inputs Reference).
 
-No configuration needed.
+| Situation | Behaviour | Why |
+|-----------|-----------|-----|
+| PR is a **draft** | skip | nobody is reviewing it yet |
+| PR author is a **bot** (dependabot, renovate…) | skip | machine-generated |
+| PR is **merged or closed** | skip | a review landing after the merge helps nobody |
+| **Twin PR** — same hotfix opened against `master` *and* `develop` | review once, second PR gets a comment linking to the first | identical content, one review is enough |
+| **New push** to a PR already reviewed | review only the new commits | previously reviewed code is not re-read |
+| New push with **no new commits** (e.g. rebase-noop) | skip | nothing changed |
+
+**Twin-PR detection** matches two ways: same head branch + same head commit, or — for a
+hotfix cherry-picked onto a sibling branch (`4587-master` / `4587-from-develop`) — an
+identical *diff-content fingerprint* (hunk headers and blob hashes excluded, so the same
+change against a different base still matches).
+
+**Incremental review** works off a single state-marker comment the action keeps on the PR:
+
+```
+<!-- claude-review-state sha=<reviewed head> fp=<diff fingerprint> -->
+```
+
+The next run diffs `sha..HEAD`, feeds Claude only those commits plus the previous review's
+comments, and asks it to confirm which earlier findings are now fixed instead of
+re-reporting them. Requires `fetch-depth: 0` in your checkout step. It falls back to a full
+review automatically on force-push/rebase, or when the incremental patch exceeds
+`max_incremental_bytes`.
+
+**Forcing a full review:** comment `/review full` (or `/review force`) on the PR, or run the
+workflow manually with `force: true`.
 
 ---
 
