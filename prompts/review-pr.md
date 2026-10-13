@@ -307,7 +307,7 @@ const value = data?.result ?? defaultValue;
 
 ### Walkthrough
 
-Wrap this whole section in `<details><summary>Walkthrough</summary>` … `</details>` so it stays collapsed and never buries the Findings.
+Wrap this whole section in `<details>` … `</details>`. On the **first review** of a PR (no previous bot comments in Step 2b), use `<details open><summary>Walkthrough</summary>` so the changes table and diagram are visible immediately — that's when the reader needs the map. On **re-reviews**, use plain `<details><summary>Walkthrough</summary>` (collapsed) so it never buries the Findings.
 
 **Changes table (always include):** one row per changed file (or per logical group for large PRs), summarizing *what* changed — not a diff restatement.
 
