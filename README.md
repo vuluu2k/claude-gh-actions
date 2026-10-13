@@ -378,7 +378,7 @@ Claude auto-detects from `package.json` + `next.config.*` and reviews using Reac
 | `github_token` | **Yes** | — | GitHub token (use `${{ secrets.GITHUB_TOKEN }}`) |
 | `pr_number` | No | auto-detect | PR number — auto-detected from event, only needed for `workflow_dispatch` |
 | `max_turns` | No | `40` | Maximum agentic turns for Claude |
-| `model` | No | `claude-opus-5` | Claude model to use |
+| `model` | No | `claude-opus-5-5` | Claude model to use |
 | `review_prompt` | No | built-in | Override the entire review prompt (advanced) |
 | `extra_prompt` | No | — | Append additional instructions to the prompt |
 | `skip_merged` | No | `true` | Skip the review when the PR is already merged/closed |

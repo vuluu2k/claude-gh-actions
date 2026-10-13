@@ -14,6 +14,8 @@ Create GitHub PR reviews with inline line-level comments and a structured summar
 
 **Evidence or silence.** Any claim about code outside the diff (a caller, a utility's behavior, a missing handler) must be backed by an actual grep/read you performed. No receipt → downgrade to a question or drop it. Never guess at behavior you can verify.
 
+**Diff-introduced only.** A finding must be *caused or worsened by this diff*. Pre-existing issues the diff merely sits next to, touches, or fails to fix (an old leak, a loose validation, a missing cleanup that predates the PR) are NOT inline findings — at most one line in the summary ("Pre-existing, out of scope: …"), and only if Major-grade. The test: "would this comment have been equally valid on the commit *before* this PR?" If yes → not this PR's problem. Exception: the diff's correctness directly *depends* on the pre-existing flaw (the new code reads state that was never cleared, so the new path breaks) — then it's in scope, framed around the new code.
+
 ## CI Rules (IMPORTANT — applies to ALL steps)
 
 - No shell redirects (`>`), pipes (`|`), chains (`&&`/`||`), or command substitution (`$(cmd)`).
@@ -134,7 +136,7 @@ gh pr view <N> --json files --jq '.files[] | select(.additions > 0) | .path'
 
 | Commit Type | Focus |
 |-------------|-------|
-| `fix:` | Root cause solved? Regression risk? Edge cases? Test for bug? |
+| `fix:` | Root cause solved? Regression risk? Edge cases? Test for bug? **Scope is the fix itself** — every comment must relate to the bug being fixed or a regression this diff introduces. Do not audit the surrounding file for unrelated improvements (hardening, i18n, a11y, error-message wording, missing handlers that predate the PR). |
 | `feat:` | Design sound? Follows patterns? Breaking changes? |
 | `refactor:` | Behavior preserved? Actually cleaner? No mixed-in features? |
 | `chore:` | Config correct? Security implications? |
@@ -191,6 +193,7 @@ For each file passing Step 3 filter: read diff hunks, apply Step 5 findings, ide
 You now have a list of *candidate* findings. Re-read them with a fresh, skeptical eye, as if a second reviewer were auditing your work for false positives. This separate filtering pass is the single highest-impact noise control used by every leading tool (BugBot's validator model, Greptile's self-challenge, CodeRabbit's verification lane, Anthropic's per-finding filter). For **each** candidate:
 
 1. **Trace the trigger.** Confirm the concrete input/sequence you claim actually reaches the buggy line — re-grep the call path if needed. If you cannot trace a real path to the defect, **drop it**.
+1.5. **Blame the diff.** Ask: "would this comment be equally valid on the commit before this PR?" If yes, it's pre-existing → drop the inline comment (Major-grade ones become one summary line at most).
 2. **Check the receipt.** Every cross-file claim (caller behavior, utility semantics, missing handler) must cite a grep/read you actually did. No receipt → downgrade to a question or drop.
 3. **Score confidence 0–100** and apply the Review Philosophy gate (Major ≥70, Minor ≥80, Nitpick ≥90). Below the bar → drop, unless severe-impact escape clause applies.
 4. **Apply `suppress_rules`** from review-config.yml and the Do-Not-Flag list (Step 7). Matching candidate → drop.
@@ -222,12 +225,23 @@ Never post a comment whose sole content is one of these (learned from PR-Agent, 
 - Missing rate-limiting / DOS / resource-exhaustion hardening, unless the path is security-critical.
 - Code elements that may be defined elsewhere in the codebase (grep first — don't flag "undefined" without checking).
 - Test/fixture/doc-only nitpicks when the production change itself is clean.
+- Generic hardening the diff didn't make worse: missing `.catch()`/error handler whose only consequence is a console warning, accessibility/keyboard/touch gaps, hardcoded-language strings, "error message could be clearer / blames the user" — unless a project rule (CLAUDE.md / extra_rules / path_instructions) explicitly requires it, or the omission loses data or breaks the feature.
+- Observations that are not defects: "the old code did X and this keeps/drops it", semantic-correctness debates with no user-visible failure (spec pedantry), "worth confirming before merge" musings. If there's no concrete breakage, it's not a finding.
+- Pre-existing issues adjacent to the diff (see Review Philosophy: Diff-introduced only).
 
 A finding that is genuinely Major (a real bug/security hole) is never suppressed by this list — these only kill low-value noise.
 
-### Finding budget
+### Finding budget (scales with the PR — small fix ≠ large feature)
 
-Rank surviving findings by **severity × confidence**. Post the top ~10–15. If more remain, post the highest and roll the rest into a single summary line ("N additional minor/nitpick items omitted for signal"). A wall of 30 comments trains the team to ignore the bot.
+Rank surviving findings by **severity × confidence**, then cap inline comments by PR size:
+
+| Diff size | Inline comment cap |
+|-----------|--------------------|
+| < 50 changed lines, or any `fix:` PR | **3** (Majors always fit; Minors only if room; Nitpicks almost never) |
+| 50–300 lines | **6** |
+| > 300 lines | **10–15** |
+
+Majors are never cut by the cap — if Majors alone exceed it, post them all. Everything cut rolls into one summary line ("N additional minor/nitpick items omitted for signal"). On a small fix PR, 1 sharp comment on the fix beats 5 correct-but-tangential Minors — a wall of comments trains the team to ignore the bot.
 
 **Reporting threshold for potential bugs:** If you can name a concrete input, value, or sequence of events that makes the code misbehave, report it — even without running it; state the trigger condition explicitly ("when the list is empty…", "if the request retries after step 1 committed…"). Conversely, vague unease without a concrete trigger is NOT a finding — investigate further (Step 5) or drop it. Never downgrade a reproducible logic bug to Nitpick because it "probably rarely happens": rarity affects priority, not severity.
 
@@ -372,4 +386,6 @@ If no issues: `LGTM! No issues found.` + files reviewed count + positive notes.
 | Flagging noise (docstrings, naming, unused imports) | Check the Do-Not-Flag list (Step 7) before posting |
 | Re-posting a comment from a prior review | Dedup against `pr-comments.json`; use the follow-up table (Step 2b) |
 | Skipping the self-critique pass | Always re-audit candidates for false positives before submitting (Step 6.5) |
-| Burying real bugs under 30 nitpicks | Rank by severity × confidence, cap at ~10-15, summarize the rest (Step 7) |
+| Burying real bugs under 30 nitpicks | Rank by severity × confidence, apply the size-scaled cap, summarize the rest (Step 7) |
+| Flagging pre-existing issues on a small fix PR | Blame the diff: equally valid before this PR → not this PR's problem (Step 6.5) |
+| Auditing the whole file on a `fix:` PR | Scope is the fix itself — the bug fixed + regressions introduced (Step 4) |

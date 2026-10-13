@@ -368,7 +368,7 @@ Claude tự detect từ `package.json` + `next.config.*` và review theo React/N
 | `github_token` | **Yes** | — | GitHub token (dùng `${{ secrets.GITHUB_TOKEN }}`) |
 | `pr_number` | No | auto-detect | Số PR — tự detect từ event, chỉ cần khi `workflow_dispatch` |
 | `max_turns` | No | `40` | Số lượt tối đa Claude được thao tác |
-| `model` | No | `claude-opus-5` | Model Claude sử dụng |
+| `model` | No | `claude-opus-5-5` | Model Claude sử dụng |
 | `review_prompt` | No | built-in | Override toàn bộ review prompt (advanced) |
 | `extra_prompt` | No | — | Thêm instructions vào cuối prompt |
 | `skip_merged` | No | `true` | Bỏ qua review khi PR đã merge/đóng |
