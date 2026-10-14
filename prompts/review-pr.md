@@ -114,6 +114,7 @@ Apply BEFORE reading any diffs. Skip these patterns:
 **Per-repo overrides** from `.claude/review-config.yml`:
 ```yaml
 review:
+  language: "Vietnamese"                  # Optional; default = language of the PR title/body
   ignore_patterns: ["custom/path/*"]      # Added to defaults
   include_patterns: ["generated/important.ts"]  # Force-include
   extra_rules: ["Custom review rule"]
@@ -142,6 +143,17 @@ gh pr view <N> --json files --jq '.files[] | select(.additions > 0) | .path'
 | `chore:` | Config correct? Security implications? |
 | `test:` | Tests meaningful? Not testing implementation details? |
 | `perf:` | Measurable? Tradeoffs acceptable? |
+
+## Step 4.5: Senior Lens — judge the approach before the lines
+
+A senior reviewer first asks "is this the right change?", then "is it written right?". Answer these four before line-level analysis. Each is a finding **only** with a concrete receipt — otherwise stay silent:
+
+1. **Root cause or symptom?** Does the change fix why the bug happens, or guard one caller while siblings stay broken? Receipt: the other call sites/paths (`path:line`) that hit the same root cause.
+2. **Simpler path already exists?** An existing helper, framework feature, or established pattern in this repo that does the job with less code. Receipt: the existing code (`path:line`). "Could be cleaner" with no concrete alternative is not a finding.
+3. **Blast radius & rollout.** Schema/data migration, changed API/event/serialized contract, new config/env var/secret, deploy ordering between services, irreversible operations, feature flag. Ask: can this be rolled back safely? What breaks for in-flight data or old clients during deploy?
+4. **Does a test prove it?** For `fix:` — is there a test that fails without the fix? For new branching logic on a money/auth/data path — is it covered? If missing, name the exact test case (input → expected result); "add tests" alone is noise. Severity: Minor, unless the path is money/auth/data-loss.
+
+Approach-level findings (1, 2) go in the summary's **Approach** section, not inline — max 1–2, they're the highest-value feedback a PR gets. Rollout findings (3) go in **Risk & Rollout**. Test gaps (4) go inline on the changed function.
 
 ## Step 5: Deep Analysis (CRITICAL — do NOT skip)
 
@@ -283,17 +295,56 @@ gh api repos/{owner}/{repo}/pulls/<NUMBER>/reviews --method POST --input /tmp/re
 - `![Minor](https://img.shields.io/badge/Minor-orange?style=for-the-badge)` — design issues, missing error handling, regressions, readability
 - `![Nitpick](https://img.shields.io/badge/Nitpick-cyan?style=for-the-badge)` — style, naming, optional improvements
 
-**Expected actions:** Major = must fix | Minor = should fix or justify | Nitpick = optional
+- `![Question](https://img.shields.io/badge/Question-blue?style=for-the-badge)` — you need information only the author has (intended behavior, an invariant, a deploy assumption), and the answer decides whether there is a severe bug. Ask one specific question and say what breaks if the answer is "no". Max 2 per review; never use it to smuggle in a low-confidence nit.
+
+**Expected actions:** Major = must fix | Minor = should fix or justify | Nitpick = optional | Question = reply
+
+**Senior tone:** direct when you're sure ("This double-charges on retry"), curious when you're not ("Is `order_id` unique per tenant? If not, …"). Name trade-offs instead of dictating taste. When the fix relies on a non-obvious principle (idempotency, cache invalidation, TOCTOU), add one sentence of *why* so the author can spot it next time — teach, don't lecture.
+
+**Write for the PR author, not for yourself.** They did not see your analysis — every comment must make sense on its own, read in 10 seconds:
+- **Language:** write all prose in the language of the PR title/body (e.g. Vietnamese PR → Vietnamese review), unless `review-config.yml` sets `review.language`. Keep code, identifiers, file paths and badge labels as-is.
+- Lead with the consequence in plain words (what the user/system will see), not the mechanism.
+- Never leak internal process: no "Step 5h", "confidence 85", "falsification pass", "Do-Not-Flag".
+- One issue per comment. No hedging filler ("it might be worth considering…").
+
+**Inline comment template (use this exact structure):**
+```
+![Major](https://img.shields.io/badge/Major-red?style=for-the-badge)
+
+**<One-line title: what breaks>**
+
+**Impact:** <what the user/system sees when it fails — 1 sentence>
+**Trigger:** <concrete input/state/sequence that makes it fail>
+
+```suggestion
+<fixed code>
+```
+
+<details><summary>Evidence</summary>
+
+<callers/implementations you traced, with `path:line`>
+</details>
+```
+
+Use a ```` ```suggestion ```` block only when the fix replaces exactly the commented lines; otherwise use a normal code block with the language tag and say where it goes. Omit the Evidence block for Nitpicks.
 
 **Example:**
 ```
 ![Major](https://img.shields.io/badge/Major-red?style=for-the-badge)
 
-Null safety — `data` can be undefined when API returns error response.
+**Checkout crashes when the payment API returns an error**
+
+**Impact:** user sees a blank page instead of the "payment failed" message; the order stays stuck in `pending`.
+**Trigger:** API responds 4xx/5xx → `data` is `undefined` → `data.result` throws.
 
 ```suggestion
 const value = data?.result ?? defaultValue;
 ```
+
+<details><summary>Evidence</summary>
+
+`fetchPayment` (`src/api/payment.ts:31`) returns `undefined` on non-2xx instead of throwing; both callers (`checkout.vue:88`, `retry.ex:14`) read `.result` directly.
+</details>
 ```
 
 ## Summary Format
@@ -301,8 +352,12 @@ const value = data?.result ?? defaultValue;
 ```markdown
 ## PR Review Summary
 
+> **<Verdict emoji + word>** — <1–2 plain sentences: can this merge, and what exactly must happen first?>
+> e.g. "🔴 **Significant changes needed** — the retry path can charge a customer twice (see #1); fix that, the rest is optional."
+> Verdicts: ✅ LGTM | 🟡 Minor changes needed | 🔴 Significant changes needed
+
 **Type**: fix | feat | refactor | ...
-**Files reviewed**: N | **Issues found**: N major, N minor, N nitpick
+**Files reviewed**: N | **Issues found**: N major, N minor, N nitpick, N question
 **Review effort**: [1-5] — 1 = small & trivial, 5 = large/complex/high-risk (triage signal for the human reviewer)
 
 ### Walkthrough
@@ -338,10 +393,17 @@ Only include arrows/participants that the diff actually touches. If a Mermaid di
 - ⚠️ Needs human verification: <claim you can't confirm from the diff>
 - 🔎 Scope creep: <code doing things the description never mentions>
 
+### Approach
+> Only when Step 4.5 (1) or (2) produced a finding with a receipt. 1–2 bullets: what you'd do differently, why, and the existing code that proves it's feasible. Omit the section otherwise — never pad it.
+
+### Risk & Rollout
+> Only when Step 4.5 (3) applies (migration, contract change, new config, deploy ordering, irreversible op). Bullets: what to do before/while deploying, what to watch after (log line, metric, error), how to roll back. Omit otherwise.
+
 ### Findings
-1. ![Major](https://img.shields.io/badge/Major-red) Brief description (`path/file:42`)
-   - *Evidence*: traced caller X which already does Y
-2. ![Minor](https://img.shields.io/badge/Minor-orange) Brief description (`path/file:15`)
+> One line each, ordered Major → Nitpick: what breaks → why it matters. Details live in the inline comment — don't repeat them here.
+
+1. ![Major](https://img.shields.io/badge/Major-red) Retry charges the customer twice → duplicate payments (`path/file:42`)
+2. ![Minor](https://img.shields.io/badge/Minor-orange) Timeout not cleared on unmount → stale toast after navigation (`path/file:15`)
 3. ![Nitpick](https://img.shields.io/badge/Nitpick-cyan) Brief description (`path/file:8`)
 
 ### Previous Review Follow-up
@@ -356,16 +418,13 @@ Only include arrows/participants that the diff actually touches. If a Mermaid di
 **Resolved: N/N | Withdrawn: N/N | Unresolved: N/N**
 
 ### Positive Notes
-- Notable good practices
-
-### Recommendation
-LGTM | Minor changes needed | Significant changes needed
+> Optional, max 2 bullets, only specific things worth repeating (name the file/pattern). Skip the section rather than write generic praise.
 
 ---
 *Reviewed by Claude Code*
 ```
 
-If no issues: `LGTM! No issues found.` + files reviewed count + positive notes.
+If no issues: verdict line `✅ **LGTM** — <one sentence on what you checked>` + files reviewed count + positive notes (if any).
 
 ## Common Mistakes
 
@@ -389,3 +448,7 @@ If no issues: `LGTM! No issues found.` + files reviewed count + positive notes.
 | Burying real bugs under 30 nitpicks | Rank by severity × confidence, apply the size-scaled cap, summarize the rest (Step 7) |
 | Flagging pre-existing issues on a small fix PR | Blame the diff: equally valid before this PR → not this PR's problem (Step 6.5) |
 | Auditing the whole file on a `fix:` PR | Scope is the fix itself — the bug fixed + regressions introduced (Step 4) |
+| Reviewing lines but missing that the approach is wrong | Run the Senior Lens before line-level analysis (Step 4.5) |
+| Approving a fix that only patches one caller | Grep sibling paths hitting the same root cause (Step 4.5) |
+| "Add tests" with no specifics | Name the exact test case: input → expected result (Step 4.5) |
+| Asserting a guess about intent as a bug | Ask one `Question` that states what breaks if the answer is "no" |
